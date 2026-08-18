@@ -438,6 +438,7 @@ def main():
     if not TOKEN:
         print("BOT_TOKEN সেট করা হয়নি!")
         return
+
     if ADMIN_ID == 0:
         print("ADMIN_ID সেট করা হয়নি!")
         return
@@ -445,20 +446,38 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button_handler, pattern="^custom_request$")],
+        entry_points=[
+            CallbackQueryHandler(
+                button_handler,
+                pattern="^custom_request$"
+            )
+        ],
         states={
-            WAITING_CUSTOM_REASON: [MessageHandler(filters.TEXT & \~filters.COMMAND, custom_reason)]
+            WAITING_CUSTOM_REASON: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    custom_reason
+                )
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel_conv)]
+        fallbacks=[
+            CommandHandler("cancel", cancel_conv)
+        ]
     )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, handle_message))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_message
+        )
+    )
 
     print("Bot চালু হয়েছে...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
