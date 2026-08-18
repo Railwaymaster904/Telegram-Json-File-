@@ -1,319 +1,128 @@
 import os
 import logging
-import requests
-from bs4 import BeautifulSoup
-
+import tempfile
+import asyncio
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+import yt_dlp
 
-
-# ============================================================
-# CONFIG
-# ============================================================
-
-# Railway Environment Variable থেকে Bot Token নেওয়া হবে
 TOKEN = os.getenv("BOT_TOKEN")
 
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# ============================================================
-# LOGGING
-# ============================================================
-
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-
-logger = logging.getLogger(__name__)
-
-
-# ============================================================
-# START COMMAND
-# ============================================================
+SEARCH_RESULTS = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "হ্যালো! আমি xHamster Demo Bot 🔥\n\n"
+        "হ্যালো! xHamster Demo Bot 🔥\n\n"
         "কমান্ড:\n"
-        "/search <কিওয়ার্ড> - সার্চ করো\n\n"
-        "অথবা সরাসরি কোনো xHamster ভিডিও লিংক পাঠাও।"
+        "/search <কিওয়ার্ড> - সার্চ করো\n"
+        "তারপর নাম্বার দিয়ে ভিডিও সিলেক্ট করো"
     )
 
-
-# ============================================================
-# SEARCH COMMAND
-# ============================================================
-
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if not context.args:
-        await update.message.reply_text(
-            "❌ কিওয়ার্ড দাও।\n\n"
-            "উদাহরণ:\n"
-            "/search blonde"
-        )
+        await update.message.reply_text("❌ কিওয়ার্ড দাও।\nউদাহরণ: /search blonde")
         return
 
     query = " ".join(context.args)
+    msg = await update.message.reply_text(f"🔍 সার্চ করছি: {query} ...")
 
-    await update.message.reply_text(
-        f"🔍 সার্চ করছি: {query} ..."
-    )
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,
+        "default_search": "ytsearch5",  # fallback
+    }
 
     try:
-        url = f"https://xhamster.com/search/{query}"
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # xHamster সার্চ
+            info = ydl.extract_info(f"https://xhamster.com/search/{query}", download=False)
 
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
+        results = []
+        if "entries" in info:
+            for i, entry in enumerate(info["entries"][:5], 1):
+                title = entry.get("title", "No title")
+                url = entry.get("url") or entry.get("webpage_url")
+                results.append({"title": title, "url": url})
+                await update.message.reply_text(f"{i}. {title}")
 
-        response = requests.get(
-            url,
-            headers=headers,
-            timeout=15
-        )
+        if not results:
+            await msg.edit_text("কিছু পাওয়া যায়নি 😔")
+            return
 
-        response.raise_for_status()
-
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser"
-        )
-
-        videos = []
-
-        for item in soup.select(".thumb-list__item")[:5]:
-
-            title_tag = item.select_one(
-                ".video-thumb-info__name"
-            )
-
-            link_tag = item.select_one("a")
-
-            if title_tag and link_tag:
-
-                title = title_tag.get_text(
-                    strip=True
-                )
-
-                href = link_tag.get("href", "")
-
-                if href.startswith("http"):
-                    link = href
-                else:
-                    link = "https://xhamster.com" + href
-
-                videos.append(
-                    f"• {title}\n"
-                    f"🔗 {link}"
-                )
-
-        if videos:
-
-            message = (
-                f"🔎 ফলাফল: {query}\n\n"
-                + "\n\n".join(videos)
-            )
-
-            await update.message.reply_text(
-                message
-            )
-
-        else:
-
-            await update.message.reply_text(
-                "😔 কোনো ফলাফল পাওয়া যায়নি।"
-            )
-
-    except requests.RequestException as e:
-
-        logger.error(
-            f"Search request error: {e}"
-        )
-
-        await update.message.reply_text(
-            "❌ ওয়েবসাইটে কানেক্ট করতে সমস্যা হয়েছে।"
-        )
+        SEARCH_RESULTS[update.effective_user.id] = results
+        await update.message.reply_text("ভিডিও সিলেক্ট করতে নাম্বার লিখো (1-5)")
 
     except Exception as e:
+        await msg.edit_text(f"সার্চ ফেইল: {str(e)}")
 
-        logger.exception(
-            f"Search error: {e}"
-        )
-
-        await update.message.reply_text(
-            "❌ সার্চ করার সময় একটি সমস্যা হয়েছে।"
-        )
-
-
-# ============================================================
-# HANDLE LINK
-# ============================================================
-
-async def handle_link(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if not update.message:
-        return
-
+async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    if "xhamster.com" not in text.lower():
+    if user_id not in SEARCH_RESULTS:
         return
 
-    await update.message.reply_text(
-        "🔎 ভিডিও ইনফো নিচ্ছি..."
-    )
+    if not text.isdigit():
+        await update.message.reply_text("শুধু নাম্বার লিখো (1-5)")
+        return
+
+    num = int(text)
+    results = SEARCH_RESULTS[user_id]
+
+    if num < 1 or num > len(results):
+        await update.message.reply_text("সঠিক নাম্বার দাও")
+        return
+
+    video = results[num - 1]
+    await update.message.reply_text(f"⬇️ ডাউনলোড শুরু করছি...\n{video['title']}\n\nঅপেক্ষা করো (সময় লাগতে পারে)")
 
     try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ydl_opts = {
+                "format": "worst[ext=mp4]/worst",  # সবচেয়ে ছোট কোয়ালিটি
+                "outtmpl": f"{tmpdir}/%(title)s.%(ext)s",
+                "quiet": True,
+                "no_warnings": True,
+            }
 
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(video["url"], download=True)
+                filename = ydl.prepare_filename(info)
 
-        response = requests.get(
-            text,
-            headers=headers,
-            timeout=15
-        )
+            # ফাইল সাইজ চেক
+            size = os.path.getsize(filename)
+            if size > 49 * 1024 * 1024:  # 49MB
+                await update.message.reply_text("❌ ভিডিও খুব বড় (৫০MB এর বেশি)। পাঠানো যাচ্ছে না।")
+                return
 
-        response.raise_for_status()
+            with open(filename, "rb") as f:
+                await update.message.reply_video(video=f, caption=video["title"][:200])
 
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser"
-        )
-
-        title_tag = soup.select_one("h1")
-
-        if title_tag:
-            title = title_tag.get_text(
-                strip=True
-            )
-        else:
-            title = "N/A"
-
-        await update.message.reply_text(
-            f"📌 Title: {title}\n\n"
-            f"🔗 Link: {text}"
-        )
-
-    except requests.RequestException as e:
-
-        logger.error(
-            f"Link request error: {e}"
-        )
-
-        await update.message.reply_text(
-            "❌ লিংকটি ওপেন করতে সমস্যা হয়েছে।"
-        )
+            await update.message.reply_text("✅ পাঠানো হয়েছে!")
 
     except Exception as e:
+        await update.message.reply_text(f"❌ ডাউনলোড ফেইল হয়েছে:\n{str(e)}")
 
-        logger.exception(
-            f"Link handling error: {e}"
-        )
-
-        await update.message.reply_text(
-            "❌ ভিডিওর তথ্য নেওয়া যায়নি।"
-        )
-
-
-# ============================================================
-# ERROR HANDLER
-# ============================================================
-
-async def error_handler(
-    update: object,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    logger.error(
-        "Exception while handling update:",
-        exc_info=context.error
-    )
-
-
-# ============================================================
-# MAIN
-# ============================================================
+    finally:
+        if user_id in SEARCH_RESULTS:
+            del SEARCH_RESULTS[user_id]
 
 def main():
-
     if not TOKEN:
-
-        print(
-            "❌ Error: BOT_TOKEN environment variable "
-            "set করা হয়নি!"
-        )
-
+        print("BOT_TOKEN সেট করা হয়নি!")
         return
 
-    app = (
-        Application
-        .builder()
-        .token(TOKEN)
-        .build()
-    )
+    app = Application.builder().token(TOKEN).build()
 
-    # /start
-    app.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
-    )
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("search", search))
+    app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, select_video))
 
-    # /search
-    app.add_handler(
-        CommandHandler(
-            "search",
-            search
-        )
-    )
-
-    # সাধারণ text message
-    # এখানে ~filters.COMMAND ব্যবহার করতে হবে
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle_link
-        )
-    )
-
-    # Error Handler
-    app.add_error_handler(
-        error_handler
-    )
-
-    print("🚀 Bot চালু হয়েছে...")
-
-    app.run_polling(
-        drop_pending_updates=True
-    )
-
-
-# ============================================================
-# RUN
-# ============================================================
+    print("Bot চালু...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
