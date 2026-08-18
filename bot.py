@@ -1,9 +1,10 @@
 import os
 import logging
 import tempfile
-import asyncio
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import requests
+from bs4 import BeautifulSoup
 import yt_dlp
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -28,24 +29,30 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args)
     msg = await update.message.reply_text(f"🔍 সার্চ করছি: {query} ...")
 
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": True,
-        "default_search": "ytsearch5",  # fallback
-    }
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # xHamster সার্চ
-            info = ydl.extract_info(f"https://xhamster.com/search/{query}", download=False)
+        url = f"https://xhamster.com/search/{query}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+        r = requests.get(url, headers=headers, timeout=20)
+        soup = BeautifulSoup(r.text, "html.parser")
 
         results = []
-        if "entries" in info:
-            for i, entry in enumerate(info["entries"][:5], 1):
-                title = entry.get("title", "No title")
-                url = entry.get("url") or entry.get("webpage_url")
-                results.append({"title": title, "url": url})
+        items = soup.select(".thumb-list__item")[:5]
+
+        for i, item in enumerate(items, 1):
+            title_tag = item.select_one(".video-thumb-info__name") or item.select_one("a")
+            link_tag = item.select_one("a")
+            
+            if title_tag and link_tag:
+                title = title_tag.get_text(strip=True)
+                href = link_tag.get("href", "")
+                if href.startswith("/"):
+                    link = "https://xhamster.com" + href
+                else:
+                    link = href
+                
+                results.append({"title": title, "url": link})
                 await update.message.reply_text(f"{i}. {title}")
 
         if not results:
@@ -53,7 +60,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         SEARCH_RESULTS[update.effective_user.id] = results
-        await update.message.reply_text("ভিডিও সিলেক্ট করতে নাম্বার লিখো (1-5)")
+        await update.message.reply_text("✅ ভিডিও সিলেক্ট করতে নাম্বার লিখো (1-5)")
 
     except Exception as e:
         await msg.edit_text(f"সার্চ ফেইল: {str(e)}")
@@ -77,13 +84,13 @@ async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     video = results[num - 1]
-    await update.message.reply_text(f"⬇️ ডাউনলোড শুরু করছি...\n{video['title']}\n\nঅপেক্ষা করো (সময় লাগতে পারে)")
+    await update.message.reply_text(f"⬇️ ডাউনলোড শুরু...\n{video['title']}\n\nঅপেক্ষা করো...")
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             ydl_opts = {
-                "format": "worst[ext=mp4]/worst",  # সবচেয়ে ছোট কোয়ালিটি
-                "outtmpl": f"{tmpdir}/%(title)s.%(ext)s",
+                "format": "worst[ext=mp4]/worst",
+                "outtmpl": f"{tmpdir}/%(id)s.%(ext)s",
                 "quiet": True,
                 "no_warnings": True,
             }
@@ -92,10 +99,9 @@ async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 info = ydl.extract_info(video["url"], download=True)
                 filename = ydl.prepare_filename(info)
 
-            # ফাইল সাইজ চেক
             size = os.path.getsize(filename)
-            if size > 49 * 1024 * 1024:  # 49MB
-                await update.message.reply_text("❌ ভিডিও খুব বড় (৫০MB এর বেশি)। পাঠানো যাচ্ছে না।")
+            if size > 49 * 1024 * 1024:
+                await update.message.reply_text("❌ ভিডিও ৫০MB এর বেশি। পাঠানো যাচ্ছে না।")
                 return
 
             with open(filename, "rb") as f:
@@ -104,13 +110,18 @@ async def select_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ পাঠানো হয়েছে!")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ ডাউনলোড ফেইল হয়েছে:\n{str(e)}")
+        await update.message.reply_text(f"❌ ডাউনলোড ফেইল:\n{str(e)}")
 
     finally:
         if user_id in SEARCH_RESULTS:
             del SEARCH_RESULTS[user_id]
 
 def main():
+    if not TOKEN:
+        print("BOT_TOKEN সেট করা হয়নি!")
+        return
+
+    def main():
     if not TOKEN:
         print("BOT_TOKEN সেট করা হয়নি!")
         return
