@@ -126,6 +126,11 @@ def main():
         print("BOT_TOKEN সেট করা হয়নি!")
         return
 
+    def main():
+    if not TOKEN:
+        print("BOT_TOKEN সেট করা হয়নি!")
+        return
+
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
