@@ -1,476 +1,520 @@
 import os
 import json
-import logging
-import tempfile
-import random
+import asyncio
+import re
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from dotenv import load_dotenv
+
+from telethon import TelegramClient, events
+from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, FloodWaitError
+from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthorizationRequest
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes, ConversationHandler
 )
-import requests
-from bs4 import BeautifulSoup
-import yt_dlp
 
-# ==================== CONFIG ====================
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-DATA_FILE = "data.json"
+load_dotenv()
 
-AUTO_KEYWORDS = [
-    "bangla", "bengali", "desi", "kolkata", "dhaka",
-    "bangla sex", "bengali sex", "desi sex", "bangla hot"
-]
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+SESSIONS_DIR = "sessions"
+DATA_DIR = "data"
+CODES_FILE = os.path.join(DATA_DIR, "codes.json")
+ACCOUNTS_FILE = os.path.join(DATA_DIR, "accounts.json")
 
-WAITING_CUSTOM_REASON = 1
+os.makedirs(SESSIONS_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# ==================== DATA ====================
-def load_data():
-    default = {
-        "approved": [],
-        "pending": {},
-        "search_history": {},
-        "video_history": {},
-        "database": [],
-        "auto_search": False
-    }
-    if not os.path.exists(DATA_FILE):
-        return default
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        for k, v in default.items():
-            if k not in data:
-                data[k] = v
-        return data
-    except:
-        return default
+# Conversation states
+PHONE, CODE, PASSWORD = range(3)
 
-def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
+# Global
+clients = {}          # phone -> TelegramClient
+pending = {}          # chat_id -> data
+codes_data = {}       # phone -> list of codes
+
+
+def load_json(path, default=None):
+    if default is None:
+        default = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return default
+    return default
+
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def is_approved(user_id):
-    data = load_data()
-    return str(user_id) in data.get("approved", []) or user_id == ADMIN_ID
 
-def add_to_database(videos):
-    data = load_data()
-    existing = {v["url"] for v in data.get("database", [])}
-    added = 0
-    for v in videos:
-        if v["url"] not in existing:
-            data["database"].append(v)
-            added += 1
-    data["database"] = data["database"][-800:]
-    save_data(data)
-    return added
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
 
-# ==================== AUTO SEARCH ====================
-async def auto_search_job(context: ContextTypes.DEFAULT_TYPE):
-    data = load_data()
-    if not data.get("auto_search"):
-        return
-    keyword = random.choice(AUTO_KEYWORDS)
-    logger.info(f"[AUTO] Searching: {keyword}")
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        r = requests.get(f"https://xhamster.com/search/{keyword}", headers=headers, timeout=12)
-        soup = BeautifulSoup(r.text, "html.parser")
-        results = []
-        for item in soup.select(".thumb-list__item")[:6]:
-            title_tag = item.select_one(".video-thumb-info__name") or item.select_one("a")
-            link_tag = item.select_one("a")
-            if title_tag and link_tag:
-                href = link_tag.get("href", "")
-                link = "https://xhamster.com" + href if href.startswith("/") else href
-                results.append({
-                    "title": title_tag.get_text(strip=True),
-                    "url": link,
-                    "thumb": None,
-                    "keyword": keyword,
-                    "added": datetime.now().strftime("%Y-%m-%d %H:%M")
-                })
-        if results:
-            added = add_to_database(results)
-            logger.info(f"[AUTO] Added {added} new videos")
-    except Exception as e:
-        logger.error(f"[AUTO] Error: {e}")
 
-# ==================== START ====================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    logger.info(f"Start from {user_id}")
+def get_accounts():
+    return load_json(ACCOUNTS_FILE, {})
 
-    if user_id == ADMIN_ID or is_approved(user_id):
-        keyboard = [[InlineKeyboardButton("🔍 Search", callback_data="menu_search")]]
-        if user_id == ADMIN_ID:
-            keyboard.append([InlineKeyboardButton("📊 Dashboard", callback_data="menu_dashboard")])
-        await update.message.reply_text(
-            f"স্বাগতম {user.first_name}! 🔥\n\n"
-            "নিচের বাটন ব্যবহার করো অথবা সরাসরি কিওয়ার্ড লিখে সার্চ করো।",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+
+def save_accounts(data):
+    save_json(ACCOUNTS_FILE, data)
+
+
+# ====================== Telethon Code Receiver ======================
+
+async def start_client(phone: str):
+    """একটা ক্লায়েন্ট চালু করে কোড লিসেনার যোগ করে"""
+    session_path = os.path.join(SESSIONS_DIR, phone.replace("+", ""))
+    client = TelegramClient(session_path, API_ID, API_HASH)
+
+    @client.on(events.NewMessage(from_users=777000))
+    async def code_handler(event):
+        text = event.message.message or ""
+        # কোড বের করা
+        match = re.search(r'(\d{5,6})', text)
+        if match:
+            code = match.group(1)
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            if phone not in codes_data:
+                codes_data[phone] = []
+            codes_data[phone].insert(0, {
+                "code": code,
+                "time": now,
+                "full_text": text[:200]
+            })
+            # শুধু শেষ ১০টা রাখব
+            codes_data[phone] = codes_data[phone][:10]
+            save_json(CODES_FILE, codes_data)
+
+            # অ্যাডমিনকে নোটিফিকেশন
+            try:
+                app = Application.builder().token(BOT_TOKEN).build()
+                await app.bot.send_message(
+                    ADMIN_ID,
+                    f"🔔 নতুন লগইন কোড এসেছে!\n\n"
+                    f"নাম্বার: `{phone}`\n"
+                    f"কোড: `{code}`\n"
+                    f"সময়: {now}"
+                )
+            except:
+                pass
+
+    await client.connect()
+    if await client.is_user_authorized():
+        clients[phone] = client
+        return True
     else:
-        keyboard = [
-            [InlineKeyboardButton("✅ Request", callback_data="request_access")],
-            [InlineKeyboardButton("📝 Custom Request", callback_data="custom_request")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_request")]
-        ]
-        await update.message.reply_text(
-            f"হ্যালো {user.first_name}!\n\nবট ব্যবহার করতে Request পাঠাও।",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await client.disconnect()
+        return False
 
-# ==================== BUTTONS ====================
+
+async def load_all_clients():
+    """সব সেভ করা সেশন লোড করে"""
+    accounts = get_accounts()
+    for phone in accounts:
+        try:
+            ok = await start_client(phone)
+            if ok:
+                print(f"✅ Loaded: {phone}")
+            else:
+                print(f"❌ Not authorized: {phone}")
+        except Exception as e:
+            print(f"Error loading {phone}: {e}")
+
+
+# ====================== Bot Handlers ======================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("অ্যাক্সেস নেই।")
+        return
+
+    keyboard = [
+        [KeyboardButton("📊 Dashboard")],
+        [KeyboardButton("➕ Add Account"), KeyboardButton("📥 Download Codes")],
+        [KeyboardButton("📁 Download Sessions"), KeyboardButton("📋 List Accounts")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+    await update.message.reply_text(
+        "স্বাগতম অ্যাডমিন!\nনিচের বাটনগুলো ব্যবহার করো।",
+        reply_markup=reply_markup
+    )
+
+
+async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    accounts = get_accounts()
+    total = len(accounts)
+    online = len(clients)
+
+    text = (
+        f"📊 **Dashboard**\n\n"
+        f"মোট অ্যাকাউন্ট: **{total}**\n"
+        f"অনলাইন: **{online}**\n"
+        f"কোড ফাইল: `data/codes.json`"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("📥 Download Codes", callback_data="dl_codes"),
+            InlineKeyboardButton("📁 Download Sessions", callback_data="dl_sessions")
+        ],
+        [
+            InlineKeyboardButton("📋 List Accounts", callback_data="list_acc"),
+            InlineKeyboardButton("🔄 Reload Clients", callback_data="reload")
+        ],
+        [
+            InlineKeyboardButton("➕ Add Account", callback_data="add_acc")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
     data = query.data
-    user_id = query.from_user.id
-    logger.info(f"Button: {data} from {user_id}")
+
+    if data == "dl_codes":
+        await download_codes(update, context, from_callback=True)
+    elif data == "dl_sessions":
+        await download_sessions(update, context, from_callback=True)
+    elif data == "list_acc":
+        await list_accounts(update, context, from_callback=True)
+    elif data == "reload":
+        await query.edit_message_text("রিলোড হচ্ছে...")
+        await load_all_clients()
+        await dashboard(update, context)
+    elif data == "add_acc":
+        await query.edit_message_text("নতুন অ্যাকাউন্ট যোগ করতে:\n`/login +8801XXXXXXXXX`", parse_mode="Markdown")
+
+
+async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+
+    if not context.args:
+        await update.message.reply_text("ব্যবহার: `/login +8801XXXXXXXXX`", parse_mode="Markdown")
+        return ConversationHandler.END
+
+    phone = context.args[0].strip()
+    if not phone.startswith("+"):
+        phone = "+" + phone
+
+    chat_id = update.effective_chat.id
 
     try:
-        if data == "request_access":
-            db = load_data()
-            db["pending"][str(user_id)] = {
-                "name": query.from_user.full_name,
-                "username": query.from_user.username or "None",
-                "time": datetime.now().strftime("%Y-%m-%d %H:%M")
-            }
-            save_data(db)
-            kb = [[InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}"),
-                   InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")]]
-            await context.bot.send_message(
-                ADMIN_ID,
-                f"🔔 নতুন Request\nName: {query.from_user.full_name}\nID: `{user_id}`",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(kb)
-            )
-            await query.edit_message_text("✅ Request পাঠানো হয়েছে।")
+        session_path = os.path.join(SESSIONS_DIR, phone.replace("+", ""))
+        client = TelegramClient(session_path, API_ID, API_HASH)
+        await client.connect()
 
-        elif data == "cancel_request":
-            await query.edit_message_text("বাতিল করা হয়েছে।")
+        if await client.is_user_authorized():
+            await update.message.reply_text(f"{phone} ইতিমধ্যে লগইন আছে!")
+            await client.disconnect()
+            return ConversationHandler.END
 
-        elif data == "custom_request":
-            await query.edit_message_text("কারণ লিখে পাঠাও:")
-            return WAITING_CUSTOM_REASON
+        sent = await client.send_code_request(phone)
+        pending[chat_id] = {
+            "client": client,
+            "phone": phone,
+            "phone_code_hash": sent.phone_code_hash
+        }
 
-        elif data.startswith("approve_"):
-            tid = data.split("_")[1]
-            db = load_data()
-            if tid not in db["approved"]:
-                db["approved"].append(tid)
-            db["pending"].pop(tid, None)
-            save_data(db)
-            await query.edit_message_text(f"✅ {tid} Approve হয়েছে")
-            try:
-                await context.bot.send_message(int(tid), "🎉 Approve হয়েছে! /start দাও")
-            except: pass
+        await update.message.reply_text(f"{phone} এ কোড পাঠানো হয়েছে।\nকোডটা এখানে পাঠাও:")
+        return CODE
 
-        elif data.startswith("reject_"):
-            tid = data.split("_")[1]
-            db = load_data()
-            db["pending"].pop(tid, None)
-            save_data(db)
-            await query.edit_message_text(f"❌ {tid} Reject হয়েছে")
-            try:
-                await context.bot.send_message(int(tid), "Request Reject করা হয়েছে।")
-            except: pass
+    except FloodWaitError as e:
+        await update.message.reply_text(f"FloodWait: {e.seconds} সেকেন্ড অপেক্ষা করো।")
+        return ConversationHandler.END
+    except Exception as e:
+        await update.message.reply_text(f"এরর: {e}")
+        return ConversationHandler.END
 
-        elif data == "menu_search":
-            await query.edit_message_text("🔍 কিওয়ার্ড লিখে পাঠাও:")
 
-        elif data == "menu_dashboard" and user_id == ADMIN_ID:
-            db = load_data()
-            status = "🟢 ON" if db.get("auto_search") else "🔴 OFF"
-            kb = [
-                [InlineKeyboardButton("👥 Users", callback_data="dash_users")],
-                [InlineKeyboardButton("🔍 History", callback_data="dash_search")],
-                [InlineKeyboardButton(f"🗄️ Database ({len(db.get('database',[]))})", callback_data="dash_db_0")],
-                [InlineKeyboardButton(f"⚙️ Auto: {status}", callback_data="toggle_auto")],
-                [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
-            ]
-            await query.edit_message_text("📊 Admin Dashboard", reply_markup=InlineKeyboardMarkup(kb))
+async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
 
-        elif data == "back_main":
-            kb = [[InlineKeyboardButton("🔍 Search", callback_data="menu_search")]]
-            if user_id == ADMIN_ID:
-                kb.append([InlineKeyboardButton("📊 Dashboard", callback_data="menu_dashboard")])
-            await query.edit_message_text("মেইন মেনু:", reply_markup=InlineKeyboardMarkup(kb))
+    chat_id = update.effective_chat.id
+    if chat_id not in pending:
+        await update.message.reply_text("আগে `/login` দাও।")
+        return ConversationHandler.END
 
-        elif data == "toggle_auto" and user_id == ADMIN_ID:
-            db = load_data()
-            db["auto_search"] = not db.get("auto_search", False)
-            save_data(db)
-            await query.answer(f"Auto Search {'ON' if db['auto_search'] else 'OFF'}")
-            # refresh
-            status = "🟢 ON" if db["auto_search"] else "🔴 OFF"
-            kb = [
-                [InlineKeyboardButton("👥 Users", callback_data="dash_users")],
-                [InlineKeyboardButton("🔍 History", callback_data="dash_search")],
-                [InlineKeyboardButton(f"🗄️ Database ({len(db.get('database',[]))})", callback_data="dash_db_0")],
-                [InlineKeyboardButton(f"⚙️ Auto: {status}", callback_data="toggle_auto")],
-                [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
-            ]
-            await query.edit_message_text("📊 Admin Dashboard", reply_markup=InlineKeyboardMarkup(kb))
+    code = update.message.text.strip()
+    data = pending[chat_id]
+    client = data["client"]
+    phone = data["phone"]
+    phone_code_hash = data["phone_code_hash"]
 
-        elif data == "dash_users" and user_id == ADMIN_ID:
-            db = load_data()
-            text = "👥 Approved Users:\n\n" + "\n".join(f"`{u}`" for u in db.get("approved", [])) or "খালি"
-            await query.edit_message_text(text, parse_mode="Markdown")
+    try:
+        await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+        me = await client.get_me()
 
-        elif data == "dash_search" and user_id == ADMIN_ID:
-            db = load_data()
-            text = "🔍 Recent Searches:\n\n"
-            count = 0
-            for uid, hist in db.get("search_history", {}).items():
-                for h in hist[-3:]:
-                    text += f"`{uid}` → {h['query']}\n"
-                    count += 1
-                    if count > 30: break
-            await query.edit_message_text(text[:3500] or "খালি", parse_mode="Markdown")
+        # সেভ করা
+        accounts = get_accounts()
+        accounts[phone] = {
+            "name": me.first_name or "",
+            "username": me.username or "",
+            "id": me.id,
+            "added": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        save_accounts(accounts)
 
-        elif data.startswith("dash_db_") and user_id == ADMIN_ID:
-            page = int(data.split("_")[-1])
-            db = load_data()
-            videos = db.get("database", [])
-            total = len(videos)
-            start = page * 20
-            end = start + 20
-            page_vids = videos[start:end]
+        await client.disconnect()
+        # আবার চালু করা (কোড লিসেনারসহ)
+        await start_client(phone)
 
-            if not page_vids:
-                await query.edit_message_text("Database খালি")
-                return
+        del pending[chat_id]
+        await update.message.reply_text(
+            f"✅ সফলভাবে লগইন হয়েছে!\n"
+            f"নাম: {me.first_name}\n"
+            f"নাম্বার: {phone}"
+        )
+        return ConversationHandler.END
 
-            text = f"🗄️ Database (Page {page+1}) | Total: {total}\n\n"
-            for i, v in enumerate(page_vids, start+1):
-                text += f"{i}. {v['title'][:48]}\n"
+    except SessionPasswordNeededError:
+        await update.message.reply_text("২FA পাসওয়ার্ড আছে। পাসওয়ার্ড পাঠাও:")
+        return PASSWORD
+    except PhoneCodeInvalidError:
+        await update.message.reply_text("কোড ভুল। আবার চেষ্টা করো বা /cancel দাও।")
+        return CODE
+    except Exception as e:
+        await client.disconnect()
+        del pending[chat_id]
+        await update.message.reply_text(f"এরর: {e}")
+        return ConversationHandler.END
 
-            buttons = []
-            row = []
-            for i in range(start, min(end, total)):
-                row.append(InlineKeyboardButton(str(i+1), callback_data=f"dbdl_{i}"))
-                if len(row) == 5:
-                    buttons.append(row)
-                    row = []
-            if row: buttons.append(row)
 
-            nav = []
-            if page > 0:
-                nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"dash_db_{page-1}"))
-            if end < total:
-                nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"dash_db_{page+1}"))
-            if nav: buttons.append(nav)
-            buttons.append([InlineKeyboardButton("🔙 Dashboard", callback_data="menu_dashboard")])
+async def receive_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
 
-            await query.edit_message_text(text[:4000], reply_markup=InlineKeyboardMarkup(buttons))
+    chat_id = update.effective_chat.id
+    if chat_id not in pending:
+        return ConversationHandler.END
 
-        elif data.startswith("dbdl_") and user_id == ADMIN_ID:
-            idx = int(data.split("_")[1])
-            db = load_data()
-            videos = db.get("database", [])
-            if 0 <= idx < len(videos):
-                await query.edit_message_text(f"⬇️ ডাউনলোড শুরু...\n{videos[idx]['title'][:50]}")
-                await download_and_send(context, videos[idx], user_id)
-            else:
-                await query.edit_message_text("ভিডিও পাওয়া যায়নি")
+    password = update.message.text.strip()
+    data = pending[chat_id]
+    client = data["client"]
+    phone = data["phone"]
 
-        elif data.startswith("dl_"):
-            results = context.user_data.get("last_results", [])
-            if not results:
-                await query.edit_message_text("রেজাল্ট মেয়াদোত্তীর্ণ। আবার সার্চ করো।")
-                return
-            action = data.split("_")[1]
-            if action == "all":
-                await query.edit_message_text("⬇️ All শুরু (প্রথম ৫টা)...")
-                for v in results[:5]:
-                    await download_and_send(context, v, user_id)
-                await context.bot.send_message(user_id, "✅ All শেষ")
-            else:
-                num = int(action)
-                if 1 <= num <= len(results):
-                    await query.edit_message_text(f"⬇️ ডাউনলোড...\n{results[num-1]['title'][:50]}")
-                    await download_and_send(context, results[num-1], user_id)
+    try:
+        await client.sign_in(password=password)
+        me = await client.get_me()
+
+        accounts = get_accounts()
+        accounts[phone] = {
+            "name": me.first_name or "",
+            "username": me.username or "",
+            "id": me.id,
+            "added": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        save_accounts(accounts)
+
+        await client.disconnect()
+        await start_client(phone)
+
+        del pending[chat_id]
+        await update.message.reply_text(f"✅ ২FA সহ লগইন সফল!\nনাম: {me.first_name}")
+        return ConversationHandler.END
 
     except Exception as e:
-        logger.error(f"Button error: {e}")
-        await query.edit_message_text(f"এরর হয়েছে: {str(e)[:150]}")
+        await client.disconnect()
+        del pending[chat_id]
+        await update.message.reply_text(f"এরর: {e}")
+        return ConversationHandler.END
 
-# ==================== CUSTOM REASON ====================
-async def custom_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    reason = update.message.text
-    db = load_data()
-    db["pending"][str(user.id)] = {
-        "name": user.full_name,
-        "username": user.username or "None",
-        "reason": reason,
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M")
-    }
-    save_data(db)
-    kb = [[InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user.id}"),
-           InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user.id}")]]
-    await context.bot.send_message(
-        ADMIN_ID,
-        f"🔔 Custom Request\nName: {user.full_name}\nID: `{user.id}`\nReason: {reason}",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-    await update.message.reply_text("✅ পাঠানো হয়েছে।")
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id in pending:
+        try:
+            await pending[chat_id]["client"].disconnect()
+        except:
+            pass
+        del pending[chat_id]
+    await update.message.reply_text("বাতিল করা হয়েছে।")
     return ConversationHandler.END
 
-async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("বাতিল।")
-    return ConversationHandler.END
 
-# ==================== MESSAGE / SEARCH ====================
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text.strip()
-    logger.info(f"Message from {user_id}: {text}")
-
-    if not is_approved(user_id) and user_id != ADMIN_ID:
-        await update.message.reply_text("তুমি অনুমোদিত নও। /start দাও।")
+async def list_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False):
+    if not is_admin(update.effective_user.id if not from_callback else update.callback_query.from_user.id):
         return
 
-    if text.startswith("/"):
+    accounts = get_accounts()
+    if not accounts:
+        text = "কোনো অ্যাকাউন্ট নেই।"
+    else:
+        text = f"মোট অ্যাকাউন্ট: {len(accounts)}\n\n"
+        for i, (phone, info) in enumerate(list(accounts.items())[:40], 1):
+            status = "🟢" if phone in clients else "🔴"
+            text += f"{i}. {status} `{phone}` - {info.get('name', '')}\n"
+        if len(accounts) > 40:
+            text += f"\n... আরও {len(accounts)-40} টি আছে"
+
+    if from_callback:
+        await update.callback_query.edit_message_text(text, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def download_codes(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False):
+    if not is_admin(update.effective_user.id if not from_callback else update.callback_query.from_user.id):
         return
 
-    msg = await update.message.reply_text(f"🔍 সার্চ করছি: {text}")
+    # লেটেস্ট ডাটা লোড
+    global codes_data
+    codes_data = load_json(CODES_FILE, {})
 
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        r = requests.get(f"https://xhamster.com/search/{text}", headers=headers, timeout=18)
-        soup = BeautifulSoup(r.text, "html.parser")
+    if not codes_data:
+        text = "এখনো কোনো কোড আসেনি।"
+        if from_callback:
+            await update.callback_query.edit_message_text(text)
+        else:
+            await update.message.reply_text(text)
+        return
 
-        results = []
-        for item in soup.select(".thumb-list__item")[:10]:
-            title_tag = item.select_one(".video-thumb-info__name") or item.select_one("a")
-            link_tag = item.select_one("a")
-            if title_tag and link_tag:
-                href = link_tag.get("href", "")
-                link = "https://xhamster.com" + href if href.startswith("/") else href
-                results.append({
-                    "title": title_tag.get_text(strip=True),
-                    "url": link,
-                    "thumb": None
-                })
+    # ফাইল তৈরি
+    file_path = os.path.join(DATA_DIR, "latest_codes.json")
+    save_json(file_path, codes_data)
 
-        if not results:
-            await msg.edit_text("কিছু পাওয়া যায়নি 😔")
-            return
+    caption = f"মোট {len(codes_data)} টি নাম্বারের কোড আছে।"
 
-        context.user_data["last_results"] = results
-
-        # History
-        data = load_data()
-        uid = str(user_id)
-        if uid not in data["search_history"]:
-            data["search_history"][uid] = []
-        data["search_history"][uid].append({"query": text, "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
-        data["search_history"][uid] = data["search_history"][uid][-40:]
-        save_data(data)
-
-        buttons = []
-        row = []
-        for i in range(1, len(results)+1):
-            row.append(InlineKeyboardButton(str(i), callback_data=f"dl_{i}"))
-            if len(row) == 5:
-                buttons.append(row)
-                row = []
-        if row: buttons.append(row)
-        buttons.append([InlineKeyboardButton("📥 All (৫টা)", callback_data="dl_all")])
-
-        await msg.edit_text(
-            f"✅ {len(results)}টা ভিডিও পাওয়া গেছে।\nনাম্বার চাপো:",
-            reply_markup=InlineKeyboardMarkup(buttons)
+    if from_callback:
+        await update.callback_query.message.reply_document(
+            document=open(file_path, "rb"),
+            filename="codes.json",
+            caption=caption
+        )
+    else:
+        await update.message.reply_document(
+            document=open(file_path, "rb"),
+            filename="codes.json",
+            caption=caption
         )
 
-    except Exception as e:
-        logger.error(f"Search error: {e}")
-        await msg.edit_text(f"❌ সার্চ ফেইল হয়েছে:\n{str(e)[:200]}")
 
-# ==================== DOWNLOAD ====================
-async def download_and_send(context, video, user_id):
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            ydl_opts = {
-                "format": "worst[ext=mp4]/worst",
-                "outtmpl": f"{tmp}/%(id)s.%(ext)s",
-                "quiet": True,
-                "no_warnings": True,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video["url"], download=True)
-                filename = ydl.prepare_filename(info)
+async def download_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False):
+    if not is_admin(update.effective_user.id if not from_callback else update.callback_query.from_user.id):
+        return
 
-            if os.path.getsize(filename) > 49 * 1024 * 1024:
-                await context.bot.send_message(user_id, "❌ ভিডিও ৫০MB এর বেশি")
-                return
+    import zipfile
+    zip_path = os.path.join(DATA_DIR, "all_sessions.zip")
 
-            with open(filename, "rb") as f:
-                await context.bot.send_video(user_id, video=f, caption=video["title"][:180], supports_streaming=True)
-            await context.bot.send_message(user_id, "✅ পাঠানো হয়েছে!")
-    except Exception as e:
-        await context.bot.send_message(user_id, f"❌ ডাউনলোড এরর:\n{str(e)[:180]}")
+    with zipfile.ZipFile(zip_path, "w") as zipf:
+        for f in os.listdir(SESSIONS_DIR):
+            if f.endswith(".session"):
+                zipf.write(os.path.join(SESSIONS_DIR, f), f)
 
-# ==================== MAIN ====================
+    caption = "সব সেশন ফাইল"
+
+    if from_callback:
+        await update.callback_query.message.reply_document(
+            document=open(zip_path, "rb"),
+            filename="all_sessions.zip",
+            caption=caption
+        )
+    else:
+        await update.message.reply_document(
+            document=open(zip_path, "rb"),
+            filename="all_sessions.zip",
+            caption=caption
+        )
+
+
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    text = update.message.text
+
+    if text == "📊 Dashboard":
+        await dashboard(update, context)
+    elif text == "➕ Add Account":
+        await update.message.reply_text("নাম্বার দাও:\n`/login +8801XXXXXXXXX`", parse_mode="Markdown")
+    elif text == "📥 Download Codes":
+        await download_codes(update, context)
+    elif text == "📁 Download Sessions":
+        await download_sessions(update, context)
+    elif text == "📋 List Accounts":
+        await list_accounts(update, context)
+
+
+async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """কোনো অ্যাকাউন্ট বট থেকে লগআউট করতে"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text("ব্যবহার: `/logout +8801XXXXXXXXX`", parse_mode="Markdown")
+        return
+
+    phone = context.args[0].strip()
+    if not phone.startswith("+"):
+        phone = "+" + phone
+
+    if phone in clients:
+        try:
+            await clients[phone].log_out()
+            del clients[phone]
+            await update.message.reply_text(f"{phone} লগআউট করা হয়েছে।")
+        except Exception as e:
+            await update.message.reply_text(f"এরর: {e}")
+    else:
+        await update.message.reply_text("এই নাম্বার অনলাইন নেই।")
+
+
+async def post_init(app: Application):
+    """বট স্টার্ট হলে সব ক্লায়েন্ট লোড করবে"""
+    print("Loading all sessions...")
+    await load_all_clients()
+    print("Ready!")
+
+
 def main():
-    if not TOKEN or ADMIN_ID == 0:
-        print("❌ BOT_TOKEN বা ADMIN_ID সেট করা হয়নি!")
-        return
+    global codes_data
+    codes_data = load_json(CODES_FILE, {})
 
-    app = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    if app.job_queue:
-        app.job_queue.run_repeating(
-            auto_search_job,
-            interval=60,
-            first=15
-        )
-
-    conv = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(
-                button_handler,
-                pattern="^custom_request$"
-            )
-        ],
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("login", login_command)],
         states={
-            WAITING_CUSTOM_REASON: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    custom_reason
-                )
-            ]
+            CODE: [MessageHandler(filters.TEXT & \~filters.COMMAND, receive_code)],
+            PASSWORD: [MessageHandler(filters.TEXT & \~filters.COMMAND, receive_password)],
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel_conv)
-        ],
-        allow_reentry=True
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv)
+    app.add_handler(CommandHandler("dashboard", dashboard))
+    app.add_handler(CommandHandler("logout", logout_command))
+    app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle_message
-        )
-    )
+    app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, text_handler))
 
-    print("✅ Bot started...")
+    print("Bot is running...")
     app.run_polling()
 
 
