@@ -484,7 +484,6 @@ async def post_init(app: Application):
     await load_all_clients()
     print("Ready!")
 
-
 def main():
     global codes_data
     codes_data = load_json(CODES_FILE, {})
@@ -492,20 +491,33 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("login", login_command)],
+        entry_points=[
+            CommandHandler("login", login_command)
+        ],
         states={
-            CODE: [MessageHandler(filters.TEXT & \~filters.COMMAND, receive_code)],
-            PASSWORD: [MessageHandler(filters.TEXT & \~filters.COMMAND, receive_password)],
+            CODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_code)
+            ],
+            PASSWORD: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_password)
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel)
+        ],
     )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("dashboard", dashboard))
     app.add_handler(CommandHandler("logout", logout_command))
+
     app.add_handler(conv_handler)
+
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, text_handler))
+
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler)
+    )
 
     print("Bot is running...")
     app.run_polling()
