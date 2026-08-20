@@ -1,0 +1,39 @@
+import phonenumbers
+import pycountry
+import flag
+
+DEFAULT_PRICE = 0.30
+DEFAULT_WAIT = "18 hrs"
+
+
+def detect(phone):
+
+    try:
+
+        num = phonenumbers.parse(phone)
+
+        region = phonenumbers.region_code_for_number(num)
+
+        country = pycountry.countries.get(alpha_2=region)
+
+        return {
+
+            "country": country.name,
+
+            "flag": flag.flag(region),
+
+            "code": region
+
+        }
+
+    except:
+
+        return {
+
+            "country": "Unknown",
+
+            "flag": "🏳️",
+
+            "code": "UN"
+
+        }
