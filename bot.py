@@ -2157,50 +2157,50 @@ def main():
     )
 
     # ========================================================
-    # BASIC USER COMMANDS
-    # ========================================================
+# BASIC USER COMMANDS
+# ========================================================
 
-    app.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
+app.add_handler(
+    CommandHandler(
+        "start",
+        start
     )
+)
 
-    app.add_handler(
-        CommandHandler(
-            "balance",
-            balance_cmd
-        )
+app.add_handler(
+    CommandHandler(
+        "balance",
+        balance_cmd
     )
+)
 
-    app.add_handler(
-        CommandHandler(
-            "language",
-            language_cmd
-        )
+app.add_handler(
+    CommandHandler(
+        "language",
+        language_cmd
     )
+)
 
-    app.add_handler(
-        CommandHandler(
-            "myaccounts",
-            myaccounts_cmd
-        )
+app.add_handler(
+    CommandHandler(
+        "myaccounts",
+        myaccounts_cmd
     )
+)
 
-    app.add_handler(
-        CommandHandler(
-            "support",
-            support_start
-        )
+app.add_handler(
+    CommandHandler(
+        "support",
+        support_start
     )
+)
 
-    app.add_handler(
-        CommandHandler(
-            "cancel",
-            cancel
-        )
+app.add_handler(
+    CommandHandler(
+        "cancel",
+        cancel
     )
+)
 
     # ========================================================
     # WITHDRAW / SUPPORT CONVERSATIONS
