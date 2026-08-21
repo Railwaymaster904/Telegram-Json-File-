@@ -721,9 +721,13 @@ def main():
 
     # Conversations
     login_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & \~filters.COMMAND, handle_phone)],
+        entry_points=[
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)
+        ],
         states={
-            WAITING_CODE: [MessageHandler(filters.TEXT & \~filters.COMMAND, handle_code)]
+            WAITING_CODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)
+            ]
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True
@@ -733,7 +737,9 @@ def main():
         entry_points=[CommandHandler("withdraw", withdraw)],
         states={
             WD_METHOD: [CallbackQueryHandler(wd_method)],
-            WD_DETAILS: [MessageHandler(filters.TEXT & \~filters.COMMAND, wd_details)]
+            WD_DETAILS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, wd_details)
+            ]
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
@@ -741,11 +747,12 @@ def main():
     support_conv = ConversationHandler(
         entry_points=[CommandHandler("support", support_start)],
         states={
-            SUPPORT_MSG: [MessageHandler(filters.TEXT & \~filters.COMMAND, support_message)]
+            SUPPORT_MSG: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, support_message)
+            ]
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
-
     # Register Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("balance", balance_cmd))
