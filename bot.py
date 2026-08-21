@@ -561,38 +561,75 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     login_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & \~filters.COMMAND, handle_phone)],
-        states={WAITING_CODE: [MessageHandler(filters.TEXT & \~filters.COMMAND, handle_code)]},
-        fallbacks=[CommandHandler("cancel", cancel)],
+        entry_points=[
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)
+        ],
+        states={
+            WAITING_CODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)
+            ]
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel)
+        ],
         allow_reentry=True
     )
+
     wd_conv = ConversationHandler(
-        entry_points=[CommandHandler("withdraw", withdraw)],
+        entry_points=[
+            CommandHandler("withdraw", withdraw)
+        ],
         states={
-            WD_METHOD: [CallbackQueryHandler(wd_method)],
-            WD_DETAILS: [MessageHandler(filters.TEXT & \~filters.COMMAND, wd_details)]
+            WD_METHOD: [
+                CallbackQueryHandler(wd_method)
+            ],
+            WD_DETAILS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, wd_details)
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[
+            CommandHandler("cancel", cancel)
+        ]
     )
+
     support_conv = ConversationHandler(
-        entry_points=[CommandHandler("support", support_start)],
-        states={SUPPORT_MSG: [MessageHandler(filters.TEXT & \~filters.COMMAND, support_message)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
+        entry_points=[
+            CommandHandler("support", support_start)
+        ],
+        states={
+            SUPPORT_MSG: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, support_message)
+            ]
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel)
+        ]
     )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("dashboard", dashboard))
     app.add_handler(CommandHandler("cancel", cancel))
+
     app.add_handler(login_conv)
     app.add_handler(wd_conv)
     app.add_handler(support_conv)
-    app.add_handler(CallbackQueryHandler(claim_cb, pattern=r"^claim_"))
-    app.add_handler(CallbackQueryHandler(admin_cb))
-    app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, admin_edit))
+
+    app.add_handler(
+        CallbackQueryHandler(claim_cb, pattern=r"^claim_")
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(admin_cb)
+    )
+
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, admin_edit)
+    )
 
     print("Running...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
