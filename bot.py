@@ -753,22 +753,22 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
-    # Register Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("balance", balance_cmd))
-    app.add_handler(CommandHandler("dashboard", dashboard))
-    app.add_handler(CommandHandler("cancel", cancel))
+# Register Handlers
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("balance", balance_cmd))
+app.add_handler(CommandHandler("dashboard", dashboard))
+app.add_handler(CommandHandler("cancel", cancel))
 
-    app.add_handler(login_conv)
-    app.add_handler(wd_conv)
-    app.add_handler(support_conv)
+app.add_handler(login_conv)
+app.add_handler(wd_conv)
+app.add_handler(support_conv)
 
-    app.add_handler(CallbackQueryHandler(claim_cb, pattern=r"^claim_"))
-    app.add_handler(CallbackQueryHandler(admin_cb))
-    app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, admin_edit))
+app.add_handler(CallbackQueryHandler(claim_cb, pattern=r"^claim_"))
+app.add_handler(CallbackQueryHandler(admin_cb))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_edit))
 
-    print("🚀 Bot is starting...")
-    app.run_polling()
+print("🚀 Bot is starting...")
+app.run_polling()
 
 
 if __name__ == "__main__":
