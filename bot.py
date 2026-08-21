@@ -2029,13 +2029,19 @@ async def admin_edit(
         )
 
 
+# ====================== CONFIG ======================
+
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+
 # ====================== CANCEL ======================
 
 async def cancel(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     context.user_data.clear()
 
     await update.message.reply_text(
@@ -2043,7 +2049,9 @@ async def cancel(
     )
 
     return ConversationHandler.END
-    # ============================================================
+
+
+# ============================================================
 # PART 3 — MAIN + HANDLER REGISTRATION
 # ============================================================
 
@@ -2054,13 +2062,16 @@ def main():
     # --------------------------------------------------------
 
     if not BOT_TOKEN:
-        print("❌ BOT_TOKEN is not set in .env")
+        print("❌ BOT_TOKEN is not set in environment variables.")
         return
 
     if not API_ID or not API_HASH:
         print("❌ API_ID / API_HASH is not configured.")
         return
 
+    print("✅ Configuration loaded successfully.")
+
+    # তোমার Application/handler registration এখানে থাকবে
     # --------------------------------------------------------
     # Create Telegram Bot Application
     # --------------------------------------------------------
@@ -2312,7 +2323,7 @@ def main():
         )
     )
 
-    # ========================================================
+# ========================================================
     # START BOT
     # ========================================================
 
@@ -2321,22 +2332,15 @@ def main():
     print("========================================")
 
     try:
-
         app.run_polling(
             drop_pending_updates=True
         )
 
     except KeyboardInterrupt:
-
-        print(
-            "\n🛑 Bot stopped by user."
-        )
+        print("\n🛑 Bot stopped by user.")
 
     except Exception as e:
-
-        print(
-            f"\n❌ Bot stopped بسبب error: {e}"
-        )
+        print(f"\n❌ Bot stopped بسبب error: {e}")
 
 
 # ============================================================
