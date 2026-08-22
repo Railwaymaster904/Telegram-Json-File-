@@ -983,3 +983,128 @@ async def cleanclaims_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_json(CLAIMS_FILE, new_claims)
     await update.message.reply_text(f"🧹 Cleaned `{deleted}` old claims.")
+# ====================== MORE ADMIN + UTILITY COMMANDS ======================
+
+async def setcountry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /setcountry 880 0.40 20"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    if len(context.args) < 3:
+        await update.message.reply_text(
+            "Usage:\n`/setcountry 880 0.40 20`\n\n"
+            "Format: /setcountry <country_code> <price> <wait_hours>",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        code = context.args[0]
+        price = float(context.args[1])
+        wait = int(context.args[2])
+
+        settings = load_json(COUNTRY_SETTINGS_FILE, {})
+        settings[str(code)] = {"price": price, "wait": wait}
+        save_json(COUNTRY_SETTINGS_FILE, settings)
+
+        await update.message.reply_text(
+            f"✅ Country Updated!\n\n"
+            f"Country: `{code}`\n"
+            f"Price: `${price}`\n"
+            f"Wait: `{wait} hours`",
+            parse_mode="Markdown"
+        )
+    except:
+        await update.message.reply_text("❌ Invalid format.\nExample: `/setcountry 880 0.40 20`", parse_mode="Markdown")
+
+
+async def setcapacity_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /setcapacity 880 100"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage:\n`/setcapacity 880 100`",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        code = context.args[0]
+        limit = int(context.args[1])
+
+        caps = load_json(CAPACITY_FILE, {})
+        caps[str(code)] = limit
+        save_json(CAPACITY_FILE, caps)
+
+        await update.message.reply_text(
+            f"✅ Capacity Updated!\n\nCountry: `{code}`\nLimit: `{limit}`",
+            parse_mode="Markdown"
+        )
+    except:
+        await update.message.reply_text("❌ Invalid format.")
+
+
+async def frozen_list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    frozen = get_frozen()
+    if not frozen:
+        await update.message.reply_text("No frozen accounts.")
+        return
+
+    text = f"❄️ **Frozen Accounts ({len(frozen)})**\n\n"
+    for i, (phone, info) in enumerate(list(frozen.items())[:30], 1):
+        text += f"{i}. `{phone}` - {info.get('reason', '')}\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def clearuser_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /clearuser 123456789"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage:\n`/clearuser 123456789`", parse_mode="Markdown")
+        return
+
+    try:
+        target_uid = int(context.args[0])
+    except:
+        await update.message.reply_text("Invalid User ID")
+        return
+
+    accounts = load_json(ACCOUNTS_FILE, {})
+    phones = [p for p, info in accounts.items() if info.get("uid") == target_uid]
+
+    if not phones:
+        await update.message.reply_text("This user has no accounts.")
+        return
+
+    deleted = 0
+    for phone in phones:
+        if phone in clients:
+            try:
+                await clients[phone].disconnect()
+                del clients[phone]
+            except:
+                pass
+
+        session_file = f"{SESSIONS_DIR}/{phone.replace('+','')}.session"
+        for f in [session_file, session_file + "-journal"]:
+            if os.path.exists(f):
+                try:
+                    os.remove(f)
+                except:
+                    pass
+
+        if phone in accounts:
+            del accounts[phone]
+        remove_frozen(phone)
+        deleted += 1
+
+    save_json(ACCOUNTS_FILE, accounts)
+    await update.message.reply_text(f"✅ Cleared `{deleted}` accounts of user `{target_uid}`", parse_mode="Markdown")
