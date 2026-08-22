@@ -1108,3 +1108,112 @@ async def clearuser_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_json(ACCOUNTS_FILE, accounts)
     await update.message.reply_text(f"✅ Cleared `{deleted}` accounts of user `{target_uid}`", parse_mode="Markdown")
+# ====================== BACK NUMBER SYSTEM ======================
+
+async def back_number_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /back → Start returning numbers to a user"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    await update.message.reply_text(
+        "🔄 **Back Number System**\n\n"
+        "Send the phone numbers you want to return (one per line or comma separated).\n"
+        "Example:\n`+8801712345678`\n`+8801812345678`\n\n"
+        "After sending numbers, I will ask for the User ID.",
+        parse_mode="Markdown"
+    )
+    context.user_data["back_mode"] = "waiting_numbers"
+
+
+async def handle_back_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    if context.user_data.get("back_mode") != "waiting_numbers":
+        return
+
+    text = update.message.text.strip()
+    numbers = []
+    for line in text.replace(",", "\n").splitlines():
+        num = line.strip().replace(" ", "")
+        if re.match(r'^\+?\d{8,15}$', num):
+            if not num.startswith("+"):
+                num = "+" + num
+            numbers.append(num)
+
+    if not numbers:
+        await update.message.reply_text("❌ No valid numbers found.")
+        return
+
+    context.user_data["back_numbers"] = numbers
+    context.user_data["back_mode"] = "waiting_userid"
+
+    await update.message.reply_text(
+        f"✅ Got **{len(numbers)}** numbers.\n\n"
+        f"Now send the **User ID** to whom these numbers will be assigned.",
+        parse_mode="Markdown"
+    )
+
+
+async def handle_back_userid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    if context.user_data.get("back_mode") != "waiting_userid":
+        return
+
+    try:
+        target_uid = int(update.message.text.strip())
+    except:
+        await update.message.reply_text("❌ Invalid User ID")
+        return
+
+    numbers = context.user_data.get("back_numbers", [])
+    if not numbers:
+        await update.message.reply_text("No numbers found.")
+        return
+
+    accounts = load_json(ACCOUNTS_FILE, {})
+    added = 0
+
+    for phone in numbers:
+        if phone in accounts:
+            # Update owner
+            accounts[phone]["uid"] = target_uid
+            added += 1
+        else:
+            # Create new entry
+            accounts[phone] = {
+                "uid": target_uid,
+                "name": "",
+                "price": get_settings()["price"],
+                "wait": get_settings()["wait"],
+                "claim_id": f"back_{target_uid}_{phone[1:]}_{int(datetime.now().timestamp())}"
+            }
+            added += 1
+
+    save_json(ACCOUNTS_FILE, accounts)
+
+    # Clear state
+    context.user_data.pop("back_mode", None)
+    context.user_data.pop("back_numbers", None)
+
+    await update.message.reply_text(
+        f"✅ Successfully assigned **{added}** numbers to user `{target_uid}`",
+        parse_mode="Markdown"
+    )
+
+
+# ====================== UPDATE admin_edit TO HANDLE BACK SYSTEM ======================
+# admin_edit ফাংশনের শুরুতে এই কোড যোগ করো:
+
+"""
+    # Back Number System
+    if context.user_data.get("back_mode") == "waiting_numbers":
+        await handle_back_numbers(update, context)
+        return
+
+    if context.user_data.get("back_mode") == "waiting_userid":
+        await handle_back_userid(update, context)
+        return
+"""
