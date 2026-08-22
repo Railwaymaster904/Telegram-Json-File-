@@ -1217,6 +1217,250 @@ async def handle_back_userid(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await handle_back_userid(update, context)
         return
 """
+# ====================== VPN / PROXY SYSTEM ======================
+
+PROXY_FILE = f"{DATA_DIR}/proxy_settings.json"
+
+def get_proxy_settings():
+    return load_json(PROXY_FILE, {
+        "enabled": False,
+        "api_url": "",
+        "api_key": "",
+        "type": "socks5"          # socks5 or http
+    })
+
+def save_proxy_settings(data):
+    save_json(PROXY_FILE, data)
+
+
+async def setproxy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /setproxy enabled api_url api_key socks5"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    if len(context.args) < 4:
+        await update.message.reply_text(
+            "Usage:\n`/setproxy on https://api.sharfshak.com/get YOUR_API_KEY socks5`\n\n"
+            "or\n`/setproxy off`",
+            parse_mode="Markdown"
+        )
+        return
+
+    status = context.args[0].lower()
+    if status in ["off", "false", "0"]:
+        settings = get_proxy_settings()
+        settings["enabled"] = False
+        save_proxy_settings(settings)
+        await update.message.reply_text("🔴 Proxy system disabled.")
+        return
+
+    try:
+        api_url = context.args[1]
+        api_key = context.args[2]
+        proxy_type = context.args[3].lower() if len(context.args) > 3 else "socks5"
+
+        settings = {
+            "enabled": True,
+            "api_url": api_url,
+            "api_key": api_key,
+            "type": proxy_type
+        }
+        save_proxy_settings(settings)
+
+        await update.message.reply_text(
+            f"✅ Proxy settings saved!\n\n"
+            f"Status: Enabled\n"
+            f"Type: `{proxy_type}`\n"
+            f"API: `{api_url}`",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
+
+
+async def get_proxy_for_country(country_code: str):
+    """
+    Sharfshak বা অন্য কোনো VPN API থেকে প্রক্সি নেওয়ার ফাংশন।
+    তোমাকে পরে API অনুযায়ী এই অংশটা এডজাস্ট করতে হবে।
+    """
+    settings = get_proxy_settings()
+    if not settings.get("enabled"):
+        return None
+
+    # এখানে তোমার Sharfshak API কল হবে
+    # উদাহরণ হিসেবে একটা স্ট্রাকচার দিলাম
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            params = {
+                "key": settings["api_key"],
+                "country": country_code,
+                "type": settings["type"]
+            }
+            async with session.get(settings["api_url"], params=params) as resp:
+                data = await resp.json()
+
+                # নিচের অংশটা Sharfshak-এর আসল রেসপন্স অনুযায়ী বদলাতে হবে
+                proxy_ip = data.get("ip") or data.get("proxy")
+                proxy_port = data.get("port")
+                username = data.get("user")
+                password = data.get("pass")
+
+                if proxy_ip and proxy_port:
+                    return {
+                        "proxy_type": settings["type"],
+                        "addr": proxy_ip,
+                        "port": int(proxy_port),
+                        "username": username,
+                        "password": password
+                    }
+    except Exception as e:
+        print("Proxy fetch error:", e)
+        return None
+
+    return None
+
+
+# ====================== UPDATE start_client TO SUPPORT PROXY ======================
+# পুরনো start_client ফাংশনের জায়গায় এইটা ব্যবহার করবে
+
+async def start_client(phone, use_proxy=True):
+    path = f"{SESSIONS_DIR}/{phone.replace('+', '')}"
+
+    proxy = None
+    if use_proxy:
+        country = get_country_code(phone)
+        proxy_data = await get_proxy_for_country(country)
+        if proxy_data:
+            from telethon.network import ConnectionTcpFull
+            proxy = (
+                proxy_data["proxy_type"],
+                proxy_data["addr"],
+                proxy_data["port"],
+                True,
+                proxy_data.get("username"),
+                proxy_data.get("password")
+            )
+
+    client = TelegramClient(path, API_ID, API_HASH, proxy=proxy)
+
+    @client.on(events.NewMessage(from_users=777000))
+    async def handler(e):
+        m = re.search(r'(\d{5,6})', e.message.message or "")
+        if m:
+            codes = load_json(CODES_FILE, {})
+            if phone not in codes:
+                codes[phone] = []
+            codes[phone].insert(0, {
+                "code": m.group(1),
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M")
+            })
+            codes[phone] = codes[phone][:12]
+            save_json(CODES_FILE, codes)
+
+    await client.connect()
+    if await client.is_user_authorized():
+        clients[phone] = client
+        return True
+    await client.disconnect()
+    return False
+    # ====================== UPDATE handle_phone FOR PROXY ======================
+# handle_phone ফাংশনে client তৈরির অংশটা নিচের মতো আপডেট করো
+
+async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+
+    if not is_bot_on() and not is_admin(uid):
+        await update.message.reply_text(t(uid, "🔴 Bot is currently OFF.", "🔴 বট এখন বন্ধ আছে।"))
+        return
+
+    text = update.message.text.strip().replace(" ", "")
+    if not re.match(r'^\+?\d{8,15}$', text):
+        return
+
+    phone = text if text.startswith("+") else "+" + text
+    chat_id = update.effective_chat.id
+
+    if is_frozen(phone):
+        await update.message.reply_text(
+            t(uid, f"❄️ This number is frozen.\n`{phone}`", f"❄️ এই নাম্বার ফ্রোজেন।\n`{phone}`"),
+            parse_mode="Markdown"
+        )
+        return
+
+    # Capacity Check
+    code = get_country_code(phone)
+    limit = get_capacity(code)
+    accs = load_json(ACCOUNTS_FILE, {})
+    current = sum(1 for p in accs if p.startswith(f"+{code}"))
+    if current >= limit:
+        await update.message.reply_text(
+            t(uid, f"❌ Capacity full ({current}/{limit})", f"❌ ক্যাপাসিটি পূর্ণ ({current}/{limit})")
+        )
+        return
+
+    wait_msg = await update.message.reply_text(
+        t(uid, "⏳ Waiting for otp...", "⏳ ওটিপির জন্য অপেক্ষা করা হচ্ছে...")
+    )
+
+    try:
+        # Proxy support
+        proxy = None
+        proxy_settings = get_proxy_settings()
+        if proxy_settings.get("enabled"):
+            proxy_data = await get_proxy_for_country(code)
+            if proxy_data:
+                proxy = (
+                    proxy_data["proxy_type"],
+                    proxy_data["addr"],
+                    proxy_data["port"],
+                    True,
+                    proxy_data.get("username"),
+                    proxy_data.get("password")
+                )
+
+        client = TelegramClient(
+            f"{SESSIONS_DIR}/{phone[1:]}",
+            API_ID,
+            API_HASH,
+            proxy=proxy
+        )
+        await client.connect()
+
+        if await client.is_user_authorized():
+            await wait_msg.edit_text(t(uid, "Already logged in!", "ইতিমধ্যে লগইন আছে!"))
+            await client.disconnect()
+            return
+
+        sent = await client.send_code_request(phone)
+        pending[chat_id] = {
+            "client": client,
+            "phone": phone,
+            "hash": sent.phone_code_hash,
+            "uid": uid
+        }
+
+        flag = get_flag(phone)
+        await wait_msg.edit_text(
+            f"📲 {flag} `{phone}`\n\n"
+            f"{t(uid, 'Code sent! Reply with the login code.', 'কোড পাঠানো হয়েছে! লগইন কোড দিন।')}\n\n"
+            f"➿ /cancel",
+            parse_mode="Markdown"
+        )
+        return WAITING_CODE
+
+    except FloodWaitError as e:
+        await wait_msg.edit_text(f"FloodWait! Wait {e.seconds} seconds.")
+    except Exception as e:
+        await wait_msg.edit_text(f"Error: {e}")
+
+
+# ====================== ADD setproxy COMMAND IN MAIN ======================
+# main() ফাংশনে এই লাইনটা যোগ করো:
+
+"""
+    app.add_handler(CommandHandler("setproxy", setproxy_cmd))
+"""
 # ====================== POST INIT ======================
 async def post_init(app: Application):
     print("🔄 Loading saved sessions...")
@@ -1235,50 +1479,96 @@ async def post_init(app: Application):
 
 # ====================== MAIN FUNCTION ======================
 def main():
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
-    # ===== Conversations =====
+    # ========================================================
+    # CONVERSATIONS
+    # ========================================================
+
     login_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & \~filters.COMMAND, handle_phone)],
+        entry_points=[
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND,
+                handle_phone
+            )
+        ],
         states={
-            WAITING_CODE: [MessageHandler(filters.TEXT & \~filters.COMMAND, handle_code)]
+            WAITING_CODE: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    handle_code
+                )
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel)
+        ],
         allow_reentry=True
     )
 
     wd_conv = ConversationHandler(
-        entry_points=[CommandHandler("withdraw", withdraw)],
+        entry_points=[
+            CommandHandler("withdraw", withdraw)
+        ],
         states={
-            WD_METHOD: [CallbackQueryHandler(wd_method)],
-            WD_DETAILS: [MessageHandler(filters.TEXT & \~filters.COMMAND, wd_details)]
+            WD_METHOD: [
+                CallbackQueryHandler(wd_method)
+            ],
+            WD_DETAILS: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    wd_details
+                )
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[
+            CommandHandler("cancel", cancel)
+        ]
     )
 
     support_conv = ConversationHandler(
-        entry_points=[CommandHandler("support", support_start)],
+        entry_points=[
+            CommandHandler("support", support_start)
+        ],
         states={
-            SUPPORT_MSG: [MessageHandler(filters.TEXT & \~filters.COMMAND, support_message)]
+            SUPPORT_MSG: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    support_message
+                )
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[
+            CommandHandler("cancel", cancel)
+        ]
     )
 
-    # ===== User Commands =====
+    # ========================================================
+    # USER COMMANDS
+    # ========================================================
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("language", language_cmd))
     app.add_handler(CommandHandler("myaccounts", myaccounts_cmd))
-    app.add_handler(CommandHandler("support", support_start))
 
-    # ===== Admin Commands =====
+    # ========================================================
+    # ADMIN COMMANDS
+    # ========================================================
+
     app.add_handler(CommandHandler("dashboard", dashboard))
     app.add_handler(CommandHandler("on", bot_on_cmd))
     app.add_handler(CommandHandler("off", bot_off_cmd))
     app.add_handler(CommandHandler("delacc", delacc_cmd))
     app.add_handler(CommandHandler("freeze", freeze_cmd))
     app.add_handler(CommandHandler("unfreeze", unfreeze_cmd))
+    app.add_handler(CommandHandler("frozen", frozen_list_cmd))
     app.add_handler(CommandHandler("userinfo", userinfo_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("dsession", dsession_cmd))
@@ -1287,22 +1577,62 @@ def main():
     app.add_handler(CommandHandler("cleanclaims", cleanclaims_cmd))
     app.add_handler(CommandHandler("setcountry", setcountry_cmd))
     app.add_handler(CommandHandler("setcapacity", setcapacity_cmd))
-    app.add_handler(CommandHandler("frozen", frozen_list_cmd))
     app.add_handler(CommandHandler("clearuser", clearuser_cmd))
     app.add_handler(CommandHandler("back", back_number_start))
+    app.add_handler(CommandHandler("setproxy", setproxy_cmd))
 
-    # ===== Conversation Handlers =====
+    # ========================================================
+    # CONVERSATION HANDLERS
+    # ========================================================
+
     app.add_handler(login_conv)
     app.add_handler(wd_conv)
     app.add_handler(support_conv)
 
-    # ===== Callback & Message Handlers =====
-    app.add_handler(CallbackQueryHandler(claim_cb, pattern=r"^claim_"))
-    app.add_handler(CallbackQueryHandler(admin_cb))
-    app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, admin_edit))
+    # ========================================================
+    # CALLBACK HANDLERS
+    # ========================================================
 
+    app.add_handler(
+        CallbackQueryHandler(
+            claim_cb,
+            pattern=r"^claim_"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(admin_cb)
+    )
+
+    # ========================================================
+    # ADMIN TEXT HANDLER
+    # ========================================================
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            admin_edit
+        )
+    )
+
+    # ========================================================
+    # START BOT
+    # ========================================================
+
+    print("========================================")
     print("🚀 Bot is starting...")
-    app.run_polling()
+    print("========================================")
+
+    try:
+        app.run_polling(
+            drop_pending_updates=True
+        )
+
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped by user.")
+
+    except Exception as e:
+        print(f"\n❌ Bot stopped بسبب error: {e}")
 
 
 if __name__ == "__main__":
