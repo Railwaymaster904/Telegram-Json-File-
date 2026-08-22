@@ -461,94 +461,202 @@ async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(t(user.id, "✅ Your message has been sent to support.", "✅ আপনার মেসেজ সাপোর্টে পাঠানো হয়েছে।"))
     return ConversationHandler.END
-    # ====================== WITHDRAW SYSTEM ======================
+# ====================== WITHDRAW SYSTEM ======================
+
 async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    bal = load_json(BALANCES_FILE, {}).get(str(uid), 0)
+
+    balances = load_json(BALANCES_FILE, {})
+    bal = float(balances.get(str(uid), 0))
 
     if bal < MIN_WITHDRAW:
         await update.message.reply_text(
-            t(uid, f"❌ Minimum withdraw is ${MIN_WITHDRAW}\nYour balance: ${bal:.2f}", 
-                 f"❌ মিনিমাম উইথড্র ${MIN_WITHDRAW}\nআপনার ব্যালেন্স: ${bal:.2f}")
+            t(
+                uid,
+                f"❌ Minimum withdraw is ${MIN_WITHDRAW}\n"
+                f"Your balance: ${bal:.2f}",
+                f"❌ মিনিমাম উইথড্র ${MIN_WITHDRAW}\n"
+                f"আপনার ব্যালেন্স: ${bal:.2f}"
+            )
         )
         return ConversationHandler.END
 
     kb = [
-        [InlineKeyboardButton("💳 Leader Card", callback_data="wd_card")],
-        [InlineKeyboardButton("🟡 Binance BEP20", callback_data="wd_bep")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="wd_cancel")]
+        [
+            InlineKeyboardButton(
+                "💳 Leader Card",
+                callback_data="wd_card"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🟡 Binance BEP20",
+                callback_data="wd_bep"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "❌ Cancel",
+                callback_data="wd_cancel"
+            )
+        ]
     ]
+
     await update.message.reply_text(
-        t(uid, f"💰 Balance: **${bal:.2f}**\n\nSelect withdraw method:", 
-             f"💰 ব্যালেন্স: **${bal:.2f}**\n\nউইথড্র মেথড সিলেক্ট করুন:"),
+        t(
+            uid,
+            f"💰 Balance: **${bal:.2f}**\n\n"
+            f"Select withdraw method:",
+            f"💰 ব্যালেন্স: **${bal:.2f}**\n\n"
+            f"উইথড্র মেথড সিলেক্ট করুন:"
+        ),
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
     )
+
     return WD_METHOD
 
 
-async def wd_method(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def wd_method(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     q = update.callback_query
+
     await q.answer()
+
     uid = q.from_user.id
 
     if q.data == "wd_cancel":
-        await q.edit_message_text(t(uid, "Withdraw cancelled.", "উইথড্র বাতিল করা হয়েছে।"))
+        await q.edit_message_text(
+            t(
+                uid,
+                "Withdraw cancelled.",
+                "উইথড্র বাতিল করা হয়েছে।"
+            )
+        )
         return ConversationHandler.END
 
-    context.user_data["method"] = "Leader Card" if q.data == "wd_card" else "Binance BEP20"
-    await q.edit_message_text(t(uid, "Send your details now:", "এখন আপনার ডিটেইলস পাঠান:"))
+    if q.data == "wd_card":
+        context.user_data["method"] = "Leader Card"
+
+    elif q.data == "wd_bep":
+        context.user_data["method"] = "Binance BEP20"
+
+    else:
+        await q.edit_message_text(
+            t(
+                uid,
+                "❌ Invalid withdraw method.",
+                "❌ ভুল উইথড্র মেথড।"
+            )
+        )
+        return ConversationHandler.END
+
+    await q.edit_message_text(
+        t(
+            uid,
+            "Send your details now:",
+            "এখন আপনার ডিটেইলস পাঠান:"
+        )
+    )
+
     return WD_DETAILS
 
 
-async def wd_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def wd_details(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     user = update.effective_user
     uid = user.id
-    details = update.message.text
-    method = context.user_data.get("method", "Unknown")
-    bal = load_json(BALANCES_FILE, {}).get(str(uid), 0)
-    accs = sum(1 for a in load_json(ACCOUNTS_FILE, {}).values() if a.get("uid") == uid)
 
+    details = update.message.text.strip()
+
+    method = context.user_data.get(
+        "method",
+        "Unknown"
+    )
+
+    balances = load_json(BALANCES_FILE, {})
+    bal = float(balances.get(str(uid), 0))
+
+    if bal < MIN_WITHDRAW:
+        await update.message.reply_text(
+            t(
+                uid,
+                "❌ Your balance is too low for withdrawal.",
+                "❌ আপনার ব্যালেন্স উইথড্র করার জন্য যথেষ্ট নয়।"
+            )
+        )
+        return ConversationHandler.END
+
+    accounts = load_json(ACCOUNTS_FILE, {})
+
+    accs = sum(
+        1
+        for a in accounts.values()
+        if isinstance(a, dict) and a.get("uid") == uid
+    )
+
+    # ======================
     # Reset balance
-    b = load_json(BALANCES_FILE, {})
-    b[str(uid)] = 0
-    save_json(BALANCES_FILE, b)
+    # ======================
+
+    balances[str(uid)] = 0
+    save_json(BALANCES_FILE, balances)
+
+    # ======================
+    # Withdrawal message
+    # ======================
 
     text = (
-    f"💸 **New Withdrawal Request**\n\n"
-    f"👤 **User Information**\n"
-    f"▫️ Name: {user.first_name}\n"
-    f"▫️ User ID: `{uid}`\n"
-    f"▫️ Username: @{user.username or 'None'}\n\n"
-    f"📊 **Account Summary**\n"
-    f"▫️ Total Accounts: {accs}\n"
-    f"💵 Amount: ${bal:.2f}\n\n"
-    f"🔄 **Withdrawal Details**\n"
-    f"▫️ Method: {method}\n"
-    f"▫️ Details: {details}\n"
-    f"⏰ Time: {datetime.now().strftime('%H:%M:%S - %Y/%m/%d')}"
-)
-
-if WITHDRAW_CHANNEL:
-    try:
-        await context.bot.send_message(
-            int(WITHDRAW_CHANNEL),
-            text,
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print("Withdraw Channel Error:", e)
-
-await update.message.reply_text(
-    t(
-        uid,
-        "✅ Withdrawal request submitted!",
-        "✅ উইথড্র রিকোয়েস্ট জমা দেওয়া হয়েছে!"
+        f"💸 **New Withdrawal Request**\n\n"
+        f"👤 **User Information**\n"
+        f"▫️ Name: {user.first_name}\n"
+        f"▫️ User ID: `{uid}`\n"
+        f"▫️ Username: @{user.username or 'None'}\n\n"
+        f"📊 **Account Summary**\n"
+        f"▫️ Total Accounts: {accs}\n"
+        f"💵 Amount: ${bal:.2f}\n\n"
+        f"🔄 **Withdrawal Details**\n"
+        f"▫️ Method: {method}\n"
+        f"▫️ Details: {details}\n"
+        f"⏰ Time: {datetime.now().strftime('%H:%M:%S - %Y/%m/%d')}"
     )
-)
 
-return ConversationHandler.END
+    # ======================
+    # Send to withdrawal channel
+    # ======================
 
+    if WITHDRAW_CHANNEL:
+        try:
+            await context.bot.send_message(
+                chat_id=int(WITHDRAW_CHANNEL),
+                text=text,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(
+                "Withdraw Channel Error:",
+                e
+            )
+
+    # ======================
+    # User confirmation
+    # ======================
+
+    await update.message.reply_text(
+        t(
+            uid,
+            "✅ Withdrawal request submitted!",
+            "✅ উইথড্র রিকোয়েস্ট জমা দেওয়া হয়েছে!"
+        )
+    )
+
+    context.user_data.pop("method", None)
+
+    return ConversationHandler.END
 
 # ====================== ADMIN DASHBOARD ======================
 
