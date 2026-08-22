@@ -1217,3 +1217,93 @@ async def handle_back_userid(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await handle_back_userid(update, context)
         return
 """
+# ====================== POST INIT ======================
+async def post_init(app: Application):
+    print("🔄 Loading saved sessions...")
+    accounts = load_json(ACCOUNTS_FILE, {})
+    loaded = 0
+    for phone in accounts:
+        try:
+            success = await start_client(phone)
+            if success:
+                loaded += 1
+                print(f"✅ Loaded: {phone}")
+        except Exception as e:
+            print(f"❌ Failed: {phone} → {e}")
+    print(f"✅ Bot Ready! Total loaded sessions: {loaded}")
+
+
+# ====================== MAIN FUNCTION ======================
+def main():
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+
+    # ===== Conversations =====
+    login_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.TEXT & \~filters.COMMAND, handle_phone)],
+        states={
+            WAITING_CODE: [MessageHandler(filters.TEXT & \~filters.COMMAND, handle_code)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True
+    )
+
+    wd_conv = ConversationHandler(
+        entry_points=[CommandHandler("withdraw", withdraw)],
+        states={
+            WD_METHOD: [CallbackQueryHandler(wd_method)],
+            WD_DETAILS: [MessageHandler(filters.TEXT & \~filters.COMMAND, wd_details)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+
+    support_conv = ConversationHandler(
+        entry_points=[CommandHandler("support", support_start)],
+        states={
+            SUPPORT_MSG: [MessageHandler(filters.TEXT & \~filters.COMMAND, support_message)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+
+    # ===== User Commands =====
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("balance", balance_cmd))
+    app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CommandHandler("language", language_cmd))
+    app.add_handler(CommandHandler("myaccounts", myaccounts_cmd))
+    app.add_handler(CommandHandler("support", support_start))
+
+    # ===== Admin Commands =====
+    app.add_handler(CommandHandler("dashboard", dashboard))
+    app.add_handler(CommandHandler("on", bot_on_cmd))
+    app.add_handler(CommandHandler("off", bot_off_cmd))
+    app.add_handler(CommandHandler("delacc", delacc_cmd))
+    app.add_handler(CommandHandler("freeze", freeze_cmd))
+    app.add_handler(CommandHandler("unfreeze", unfreeze_cmd))
+    app.add_handler(CommandHandler("userinfo", userinfo_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("dsession", dsession_cmd))
+    app.add_handler(CommandHandler("broadcast", broadcast_cmd))
+    app.add_handler(CommandHandler("backup", backup_cmd))
+    app.add_handler(CommandHandler("cleanclaims", cleanclaims_cmd))
+    app.add_handler(CommandHandler("setcountry", setcountry_cmd))
+    app.add_handler(CommandHandler("setcapacity", setcapacity_cmd))
+    app.add_handler(CommandHandler("frozen", frozen_list_cmd))
+    app.add_handler(CommandHandler("clearuser", clearuser_cmd))
+    app.add_handler(CommandHandler("back", back_number_start))
+
+    # ===== Conversation Handlers =====
+    app.add_handler(login_conv)
+    app.add_handler(wd_conv)
+    app.add_handler(support_conv)
+
+    # ===== Callback & Message Handlers =====
+    app.add_handler(CallbackQueryHandler(claim_cb, pattern=r"^claim_"))
+    app.add_handler(CallbackQueryHandler(admin_cb))
+    app.add_handler(MessageHandler(filters.TEXT & \~filters.COMMAND, admin_edit))
+
+    print("🚀 Bot is starting...")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
