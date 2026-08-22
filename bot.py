@@ -515,39 +515,55 @@ async def wd_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_json(BALANCES_FILE, b)
 
     text = (
-        f"💸 **New Withdrawal Request**\n\n"
-        f"👤 **User Information**\n"
-        f"▫️ Name: {user.first_name}\n"
-        f"▫️ User ID: `{uid}`\n"
-        f"▫️ Username: @{user.username or 'None'}\n\n"
-        f"📊 **Account Summary**\n"
-        f"▫️ Total Accounts: {accs}\n"
-        f"💵 Amount: ${bal:.2f}\n\n"
-        f"🔄 **Withdrawal Details**\n"
-        f"▫️ Method: {method}\n"
-        f"▫️ Details: {details}\n"
-        f"⏰ Time: {datetime.now().strftime('%H:%M:%S - %Y/%m/%d')}"
+    f"💸 **New Withdrawal Request**\n\n"
+    f"👤 **User Information**\n"
+    f"▫️ Name: {user.first_name}\n"
+    f"▫️ User ID: `{uid}`\n"
+    f"▫️ Username: @{user.username or 'None'}\n\n"
+    f"📊 **Account Summary**\n"
+    f"▫️ Total Accounts: {accs}\n"
+    f"💵 Amount: ${bal:.2f}\n\n"
+    f"🔄 **Withdrawal Details**\n"
+    f"▫️ Method: {method}\n"
+    f"▫️ Details: {details}\n"
+    f"⏰ Time: {datetime.now().strftime('%H:%M:%S - %Y/%m/%d')}"
+)
+
+if WITHDRAW_CHANNEL:
+    try:
+        await context.bot.send_message(
+            int(WITHDRAW_CHANNEL),
+            text,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print("Withdraw Channel Error:", e)
+
+await update.message.reply_text(
+    t(
+        uid,
+        "✅ Withdrawal request submitted!",
+        "✅ উইথড্র রিকোয়েস্ট জমা দেওয়া হয়েছে!"
     )
+)
 
-    if WITHDRAW_CHANNEL:
-        try:
-            await context.bot.send_message(int(WITHDRAW_CHANNEL), text, parse_mode="Markdown")
-        except Exception as e:
-            print("Withdraw Channel Error:", e)
+return ConversationHandler.END
 
-    await update.message.reply_text(t(uid, "✅ Withdrawal request submitted!", "✅ উইথড্র রিকোয়েস্ট জমা দেওয়া হয়েছে!"))
-    return ConversationHandler.END
-    # ====================== ADMIN DASHBOARD ======================**Part 7**
 
-```python
 # ====================== ADMIN DASHBOARD ======================
+
 async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
     s = get_settings()
+
     accs = len(load_json(ACCOUNTS_FILE, {}))
-    total_bal = sum(load_json(BALANCES_FILE, {}).values())
+
+    total_bal = sum(
+        load_json(BALANCES_FILE, {}).values()
+    )
+
     admins = get_admins()
 
     text = (
@@ -562,6 +578,10 @@ async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Bot Status: `{'ON' if is_bot_on() else 'OFF'}`"
     )
 
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown"
+    )
     kb = [
         [
             InlineKeyboardButton("💰 Set Price", callback_data="set_price"),
