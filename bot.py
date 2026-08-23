@@ -1,7 +1,6 @@
 import os
 import json
 import re
-import zipfile
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -22,13 +21,11 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WITHDRAW_CHANNEL = os.getenv("WITHDRAW_CHANNEL")
 FORCE_CHANNEL = os.getenv("FORCE_CHANNEL")
-REFERRAL_BONUS = float(os.getenv("REFERRAL_BONUS", 0.05))
-INITIAL_ADMINS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "0").split(",") if x.strip()]
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "0").split(",") if x.strip()]
 
 TWO_FA_PASSWORD = "Tg@123456"
-DEFAULT_PRICE = 0.30
-DEFAULT_WAIT_HOURS = 18
 MIN_WITHDRAW = 1.00
+REFERRAL_THRESHOLD = 2.00          # Pending referral এই পরিমাণ হলে Current Balance এ যাবে
 
 # ====================== PATHS ======================
 SESSIONS_DIR = "sessions"
@@ -36,22 +33,34 @@ DATA_DIR = "data"
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
-CODES_FILE = f"{DATA_DIR}/codes.json"
+# Data Files
+COUNTRIES_FILE = f"{DATA_DIR}/countries.json"
 ACCOUNTS_FILE = f"{DATA_DIR}/accounts.json"
 BALANCES_FILE = f"{DATA_DIR}/balances.json"
 CLAIMS_FILE = f"{DATA_DIR}/claims.json"
 REFS_FILE = f"{DATA_DIR}/referrals.json"
 SETTINGS_FILE = f"{DATA_DIR}/settings.json"
 ADMINS_FILE = f"{DATA_DIR}/admins.json"
-SUPPORT_FILE = f"{DATA_DIR}/support.json"
 FROZEN_FILE = f"{DATA_DIR}/frozen.json"
-BOT_STATUS_FILE = f"{DATA_DIR}/bot_status.json"
-COUNTRY_SETTINGS_FILE = f"{DATA_DIR}/country_settings.json"
-CAPACITY_FILE = f"{DATA_DIR}/capacity.json"
-LANG_FILE = f"{DATA_DIR}/user_lang.json"
+CODES_FILE = f"{DATA_DIR}/codes.json"
 
 # ====================== STATES ======================
-WAITING_CODE, WD_METHOD, WD_DETAILS, SUPPORT_MSG = range(4)
+(
+    WAITING_CODE,
+    ADD_COUNTRY_NAME,
+    ADD_COUNTRY_FREE,
+    ADD_COUNTRY_NEW,
+    ADD_COUNTRY_SPAM,
+    ADD_COUNTRY_PERM,
+    ADD_COUNTRY_CAPACITY,
+    ADD_COUNTRY_WAIT,
+    WD_METHOD,
+    WD_DETAILS,
+    WD_CONFIRM,
+    SUPPORT_MSG,
+    BACK_NUMBERS,
+    BACK_USERID
+) = range(14)
 
 # ====================== GLOBAL ======================
 clients = {}
@@ -75,7 +84,7 @@ def save_json(path, data):
 def get_admins():
     admins = load_json(ADMINS_FILE, [])
     if not admins:
-        admins = INITIAL_ADMINS[:]
+        admins = ADMIN_IDS[:]
         save_json(ADMINS_FILE, admins)
     return admins
 
@@ -83,94 +92,154 @@ def is_admin(uid):
     return uid in get_admins()
 
 def get_settings():
-    s = load_json(SETTINGS_FILE, {})
-    return {
-        "price": s.get("price", DEFAULT_PRICE),
-        "wait": s.get("wait", DEFAULT_WAIT_HOURS),
-        "ref_bonus": s.get("ref_bonus", REFERRAL_BONUS)
+    default = {
+        "ref_bonus": 0.05,
+        "min_withdraw": MIN_WITHDRAW,
+        "card_enabled": True,
+        "bep20_enabled": True,
+        "bot_on": True
     }
+    s = load_json(SETTINGS_FILE, {})
+    for k, v in default.items():
+        if k not in s:
+            s[k] = v
+    return s
 
 def save_settings(data):
     save_json(SETTINGS_FILE, data)
 
-def get_flag(phone):
+def get_flag(code):
     flags = {
-        "880": "🇧🇩", "91": "🇮🇳", "92": "🇵🇰", "1": "🇺🇸", "44": "🇬🇧", "27": "🇿🇦",
-        "234": "🇳🇬", "966": "🇸🇦", "971": "🇦🇪", "90": "🇹🇷", "7": "🇷🇺", "49": "🇩🇪",
-        "33": "🇫🇷", "86": "🇨🇳", "62": "🇮🇩", "60": "🇲🇾", "65": "🇸🇬", "63": "🇵🇭",
-        "55": "🇧🇷", "52": "🇲🇽", "20": "🇪🇬", "212": "🇲🇦", "40": "🇷🇴", "48": "🇵🇱"
+        "880": "🇧🇩", "91": "🇮🇳", "92": "🇵🇰", "1": "🇺🇸", "44": "🇬🇧",
+        "27": "🇿🇦", "234": "🇳🇬", "966": "🇸🇦", "971": "🇦🇪", "90": "🇹🇷",
+        "7": "🇷🇺", "49": "🇩🇪", "33": "🇫🇷", "86": "🇨🇳", "62": "🇮🇩",
+        "60": "🇲🇾", "65": "🇸🇬", "63": "🇵🇭", "55": "🇧🇷", "52": "🇲🇽",
+        "20": "🇪🇬", "212": "🇲🇦", "40": "🇷🇴", "48": "🇵🇱", "216": "🇹🇳",
+        "244": "🇦🇴", "1876": "🇯🇲", "233": "🇬🇭", "254": "🇰🇪", "255": "🇹🇿"
     }
-    p = phone.replace("+", "")
-    for c in sorted(flags, key=len, reverse=True):
-        if p.startswith(c):
-            return flags[c]
-    return "🏳️"
-
-def add_balance(uid, amount):
-    bal = load_json(BALANCES_FILE, {})
-    bal[str(uid)] = round(bal.get(str(uid), 0) + amount, 2)
-    save_json(BALANCES_FILE, bal)
-    return bal[str(uid)]
+    return flags.get(str(code), "🏳️")
 
 def get_country_code(phone):
     phone = phone.replace("+", "")
-    for length in [3, 2, 1]:
-        code = phone[:length]
-        if code.isdigit():
+    countries = load_json(COUNTRIES_FILE, {})
+    # Longest match first
+    for code in sorted(countries.keys(), key=len, reverse=True):
+        if phone.startswith(code):
             return code
+    # Fallback
+    for length in [4, 3, 2, 1]:
+        if phone[:length].isdigit():
+            return phone[:length]
     return phone[:2]
 
+def get_balance(uid):
+    balances = load_json(BALANCES_FILE, {})
+    data = balances.get(str(uid), {
+        "current": 0.0,
+        "pending": 0.0,
+        "total_earned": 0.0,
+        "pending_referral": 0.0
+    })
+    return data
+
+def save_balance(uid, data):
+    balances = load_json(BALANCES_FILE, {})
+    balances[str(uid)] = data
+    save_json(BALANCES_FILE, balances)
+
+def add_current_balance(uid, amount):
+    data = get_balance(uid)
+    data["current"] = round(data.get("current", 0) + amount, 3)
+    data["total_earned"] = round(data.get("total_earned", 0) + amount, 3)
+    save_balance(uid, data)
+    return data["current"]
+
+def add_pending_balance(uid, amount):
+    data = get_balance(uid)
+    data["pending"] = round(data.get("pending", 0) + amount, 3)
+    save_balance(uid, data)
+    return data["pending"]
+
 def is_bot_on():
-    return load_json(BOT_STATUS_FILE, {"on": True}).get("on", True)
+    return get_settings().get("bot_on", True)
 
-def set_bot_status(status: bool):
-    save_json(BOT_STATUS_FILE, {"on": status})
+def parse_wait_time(text):
+    """Convert '1h 10m' or '90m' or '2h' to minutes"""
+    text = text.lower().strip()
+    hours = 0
+    minutes = 0
+    h_match = re.search(r'(\d+)\s*h', text)
+    m_match = re.search(r'(\d+)\s*m', text)
+    if h_match:
+        hours = int(h_match.group(1))
+    if m_match:
+        minutes = int(m_match.group(1))
+    if not h_match and not m_match and text.isdigit():
+        minutes = int(text)
+    return hours * 60 + minutes
+    # ====================== COUNTRY SYSTEM ======================
+def get_countries():
+    return load_json(COUNTRIES_FILE, {})
 
-def get_frozen():
-    return load_json(FROZEN_FILE, {})
+def save_countries(data):
+    save_json(COUNTRIES_FILE, data)
 
-def is_frozen(phone):
-    return phone in get_frozen()
+def get_country(code):
+    countries = get_countries()
+    return countries.get(str(code))
 
-def add_frozen(phone, reason="Frozen"):
-    frozen = get_frozen()
-    frozen[phone] = {"reason": reason, "time": datetime.now().strftime("%Y-%m-%d %H:%M")}
-    save_json(FROZEN_FILE, frozen)
-
-def remove_frozen(phone):
-    frozen = get_frozen()
-    if phone in frozen:
-        del frozen[phone]
-        save_json(FROZEN_FILE, frozen)
-
-def get_capacity(code):
-    return load_json(CAPACITY_FILE, {}).get(str(code), 9999)
-
-def get_country_setting(code):
-    settings = load_json(COUNTRY_SETTINGS_FILE, {})
-    default = get_settings()
-    return settings.get(str(code), {"price": default["price"], "wait": default["wait"]})
-
-def get_user_lang(uid):
-    return load_json(LANG_FILE, {}).get(str(uid), "en")
-
-def set_user_lang(uid, lang):
-    langs = load_json(LANG_FILE, {})
-    langs[str(uid)] = lang
-    save_json(LANG_FILE, langs)
-
-def t(uid, en, bn):
-    return bn if get_user_lang(uid) == "bn" else en
-
-async def check_joined(bot, user_id):
-    if not FORCE_CHANNEL:
-        return True
-    try:
-        member = await bot.get_chat_member(FORCE_CHANNEL, user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except:
+def is_country_enabled(code):
+    country = get_country(code)
+    if not country:
         return False
-        # ====================== TELETHON FUNCTIONS ======================
+    return country.get("enabled", True)
+
+def get_country_capacity(code):
+    country = get_country(code)
+    if not country:
+        return 0
+    return int(country.get("capacity", 0))
+
+def get_used_capacity(code):
+    accounts = load_json(ACCOUNTS_FILE, {})
+    return sum(1 for phone in accounts if phone.startswith(f"+{code}"))
+
+def get_available_capacity(code):
+    return max(0, get_country_capacity(code) - get_used_capacity(code))
+
+def format_wait_time(minutes):
+    if minutes < 60:
+        return f"{minutes} min"
+    hours = minutes // 60
+    mins = minutes % 60
+    if mins == 0:
+        return f"{hours} Hour" if hours == 1 else f"{hours} Hours"
+    return f"{hours}h {mins}m"
+
+# Common Country Names (for auto detect)
+COUNTRY_NAMES = {
+    "880": "Bangladesh", "91": "India", "92": "Pakistan", "1": "USA/Canada",
+    "44": "United Kingdom", "27": "South Africa", "234": "Nigeria",
+    "966": "Saudi Arabia", "971": "UAE", "90": "Turkey", "7": "Russia",
+    "49": "Germany", "33": "France", "86": "China", "62": "Indonesia",
+    "60": "Malaysia", "65": "Singapore", "63": "Philippines", "55": "Brazil",
+    "52": "Mexico", "20": "Egypt", "212": "Morocco", "40": "Romania",
+    "48": "Poland", "216": "Tunisia", "244": "Angola", "1876": "Jamaica",
+    "233": "Ghana", "254": "Kenya", "255": "Tanzania", "256": "Uganda",
+    "250": "Rwanda", "251": "Ethiopia", "213": "Algeria", "218": "Libya",
+    "249": "Sudan", "961": "Lebanon", "962": "Jordan", "963": "Syria",
+    "964": "Iraq", "965": "Kuwait", "968": "Oman", "973": "Bahrain",
+    "974": "Qatar", "970": "Palestine", "972": "Israel", "98": "Iran",
+    "93": "Afghanistan", "94": "Sri Lanka", "95": "Myanmar", "977": "Nepal",
+    "66": "Thailand", "84": "Vietnam", "81": "Japan", "82": "South Korea",
+    "61": "Australia", "64": "New Zealand", "34": "Spain", "39": "Italy",
+    "31": "Netherlands", "32": "Belgium", "41": "Switzerland", "43": "Austria",
+    "46": "Sweden", "47": "Norway", "45": "Denmark", "358": "Finland"
+}
+
+def get_country_name(code):
+    return COUNTRY_NAMES.get(str(code), f"Country +{code}")
+    # ====================== TELETHON ======================
 async def start_client(phone):
     path = f"{SESSIONS_DIR}/{phone.replace('+', '')}"
     client = TelegramClient(path, API_ID, API_HASH)
@@ -186,7 +255,7 @@ async def start_client(phone):
                 "code": m.group(1),
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M")
             })
-            codes[phone] = codes[phone][:12]
+            codes[phone] = codes[phone][:15]
             save_json(CODES_FILE, codes)
 
     await client.connect()
@@ -197,7 +266,7 @@ async def start_client(phone):
     return False
 
 
-async def enable_2fa(client, password):
+async def enable_2fa(client, password=TWO_FA_PASSWORD):
     try:
         await client.edit_2fa(new_password=password)
         return True
@@ -205,51 +274,118 @@ async def enable_2fa(client, password):
         return False
 
 
-# ====================== START & BALANCE ======================
+# ====================== START COMMAND ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    uid = user.id
 
-    # Force Join Check
-    if FORCE_CHANNEL and not await check_joined(context.bot, user.id):
-        kb = [[InlineKeyboardButton("✅ Join Channel", url=f"https://t.me/{str(FORCE_CHANNEL).replace('@', '')}")]]
-        await update.message.reply_text(
-            t(user.id, "⚠️ Please join our channel first.", "⚠️ আগে আমাদের চ্যানেলে জয়েন করুন।"),
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-        return
+    # Force Join
+    if FORCE_CHANNEL:
+        try:
+            member = await context.bot.get_chat_member(FORCE_CHANNEL, uid)
+            if member.status not in ["member", "administrator", "creator"]:
+                kb = [[InlineKeyboardButton("✅ Join Channel", url=f"https://t.me/{str(FORCE_CHANNEL).replace('@','')}")]]
+                await update.message.reply_text(
+                    "⚠️ Please join our channel first to use the bot.",
+                    reply_markup=InlineKeyboardMarkup(kb)
+                )
+                return
+        except:
+            pass
 
     # Referral
     if context.args and context.args[0].startswith("ref_"):
         try:
-            ref = int(context.args[0][4:])
-            if ref != user.id:
+            ref_id = int(context.args[0][4:])
+            if ref_id != uid:
                 refs = load_json(REFS_FILE, {})
-                if str(user.id) not in refs:
-                    refs[str(user.id)] = ref
+                if str(uid) not in refs:
+                    refs[str(uid)] = ref_id
                     save_json(REFS_FILE, refs)
         except:
             pass
 
-    link = f"https://t.me/{context.bot.username}?start=ref_{user.id}"
-    text = t(
-        user.id,
-        f"👋 Welcome {user.first_name}!\n\nSend number with +\nExample: `+8801712345678`\n\n🔗 Referral:\n`{link}`\n\n/balance /withdraw /support /myaccounts /language",
-        f"👋 স্বাগতম {user.first_name}!\n\n+ সহ নাম্বার পাঠান\nউদাহরণ: `+8801712345678`\n\n🔗 রেফারাল:\n`{link}`\n\n/balance /withdraw /support /myaccounts /language"
+    ref_link = f"https://t.me/{context.bot.username}?start=ref_{uid}"
+
+    text = (
+        f"👋 Welcome **{user.first_name}**!\n\n"
+        f"Send phone number with +\n"
+        f"Example: `+8801712345678`\n\n"
+        f"🔗 Your Referral Link:\n`{ref_link}`\n\n"
+        f"Available Commands:\n"
+        f"/caf - Available Countries\n"
+        f"/balance - Your Balance\n"
+        f"/withdraw - Withdraw\n"
+        f"/myaccounts - My Accounts\n"
+        f"/support - Support"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+# ====================== /caf COMMAND ======================
+async def caf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    countries = get_countries()
+    if not countries:
+        await update.message.reply_text("No countries available right now.")
+        return
+
+    enabled = {k: v for k, v in countries.items() if v.get("enabled", True)}
+    if not enabled:
+        await update.message.reply_text("No countries available right now.")
+        return
+
+    text = f"🌍 **Available Countries: {len(enabled)}**\n\n"
+
+    for code, data in list(enabled.items())[:30]:
+        flag = get_flag(code)
+        name = data.get("name") or get_country_name(code)
+        free = data.get("free", 0)
+        new = data.get("new", 0)
+        spam = data.get("spam", 0)
+        perm = data.get("perm", 0)
+        capacity = data.get("capacity", 0)
+        used = get_used_capacity(code)
+        available = max(0, capacity - used)
+        wait = format_wait_time(data.get("wait", 0))
+
+        text += (
+            f"{flag} **+{code} {name}**\n"
+            f"🆓 Free: `${free}`\n"
+            f"🆕 New: `${new}`\n"
+            f"🚫 Spam: `${spam}`\n"
+            f"🔒 Perm: `${perm}`\n"
+            f"👤 Available: `{available}`\n"
+            f"⏳ Wait Time: `{wait}`\n\n"
+        )
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+    # ====================== BALANCE COMMAND ======================
 async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    bal = load_json(BALANCES_FILE, {}).get(str(uid), 0)
-    text = t(uid, f"💰 Your Balance: **\( {bal:.2f}**", f"💰 আপনার ব্যালেন্স: ** \){bal:.2f}**")
+    data = get_balance(uid)
+    accounts = load_json(ACCOUNTS_FILE, {})
+    total_accs = sum(1 for a in accounts.values() if a.get("uid") == uid)
+
+    text = (
+        f"💰 **Your Balance**\n\n"
+        f"📊 Current Balance: `${data.get('current', 0):.3f}`\n"
+        f"⏳ Pending Balance: `${data.get('pending', 0):.3f}`\n"
+        f"📈 Total Earned: `${data.get('total_earned', 0):.3f}`\n\n"
+        f"📦 Total Accounts: `{total_accs}`\n\n"
+        f"💡 How to earn:\n"
+        f"• Submit eligible accounts\n"
+        f"• Complete waiting period\n"
+        f"• Claim successful submissions"
+    )
     await update.message.reply_text(text, parse_mode="Markdown")
-    # ====================== HANDLE PHONE & CODE ======================
+
+
+# ====================== HANDLE PHONE ======================
 async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
 
     if not is_bot_on() and not is_admin(uid):
-        await update.message.reply_text(t(uid, "🔴 Bot is currently OFF.", "🔴 বট এখন বন্ধ আছে।"))
+        await update.message.reply_text("🔴 Bot is currently turned OFF by admin.")
         return
 
     text = update.message.text.strip().replace(" ", "")
@@ -259,27 +395,28 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = text if text.startswith("+") else "+" + text
     chat_id = update.effective_chat.id
 
-    if is_frozen(phone):
-        await update.message.reply_text(t(uid, f"❄️ This number is frozen.\n`{phone}`", f"❄️ এই নাম্বার ফ্রোজেন করা আছে।\n`{phone}`"), parse_mode="Markdown")
+    # Country Check
+    code = get_country_code(phone)
+    country = get_country(code)
+
+    if not country or not country.get("enabled", True):
+        await update.message.reply_text("❗️ This country is not available.")
         return
 
     # Capacity Check
-    code = get_country_code(phone)
-    limit = get_capacity(code)
-    accs = load_json(ACCOUNTS_FILE, {})
-    current = sum(1 for p in accs if p.startswith(f"+{code}"))
-    if current >= limit:
-        await update.message.reply_text(t(uid, f"❌ Capacity full for this country ({current}/{limit})", f"❌ এই দেশের ক্যাপাসিটি পূর্ণ ({current}/{limit})"))
+    available = get_available_capacity(code)
+    if available <= 0:
+        await update.message.reply_text("❗️ This country's capacity is over.")
         return
 
-    wait_msg = await update.message.reply_text(t(uid, "⏳ Waiting for otp...", "⏳ ওটিপির জন্য অপেক্ষা করা হচ্ছে..."))
+    wait_msg = await update.message.reply_text("⏳ Waiting for otp...")
 
     try:
         client = TelegramClient(f"{SESSIONS_DIR}/{phone[1:]}", API_ID, API_HASH)
         await client.connect()
 
         if await client.is_user_authorized():
-            await wait_msg.edit_text(t(uid, "This number is already logged in!", "এই নাম্বার ইতিমধ্যে লগইন আছে!"))
+            await wait_msg.edit_text("This number is already logged in!")
             await client.disconnect()
             return
 
@@ -288,13 +425,14 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "client": client,
             "phone": phone,
             "hash": sent.phone_code_hash,
-            "uid": uid
+            "uid": uid,
+            "code": code
         }
 
-        flag = get_flag(phone)
+        flag = get_flag(code)
         await wait_msg.edit_text(
             f"📲 {flag} `{phone}`\n\n"
-            f"{t(uid, 'Code sent! Reply with the 5 or 6-digit login code.', 'কোড পাঠানো হয়েছে! ৫ বা ৬ ডিজিটের লগইন কোড দিন।')}\n\n"
+            f"Code sent! Reply with the 5 or 6-digit login code.\n\n"
             f"➿ /cancel",
             parse_mode="Markdown"
         )
@@ -306,136 +444,873 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await wait_msg.edit_text(f"Error: {e}")
 
 
+# ====================== HANDLE CODE ======================
 async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id not in pending:
         return
 
     data = pending[chat_id]
-    code = update.message.text.strip()
+    code_text = update.message.text.strip()
     uid = data["uid"]
+    phone = data["phone"]
+    country_code = data["code"]
 
     try:
-        await data["client"].sign_in(data["phone"], code, phone_code_hash=data["hash"])
+        await data["client"].sign_in(phone, code_text, phone_code_hash=data["hash"])
     except SessionPasswordNeededError:
-        await update.message.reply_text(t(uid, "This number already has 2FA. Skipped.", "এই নাম্বারে ইতিমধ্যে ২FA আছে।"))
+        await update.message.reply_text("This number already has 2FA. Skipped.")
         await data["client"].disconnect()
         del pending[chat_id]
         return
     except PhoneCodeInvalidError:
-        await update.message.reply_text(t(uid, "❗️ The login code is invalid, Send the correct code.\n\n➿ /cancel", "❗️ লগইন কোড ভুল হয়েছে, সঠিক কোড দিন।\n\n➿ /cancel"))
+        await update.message.reply_text("❗️ The login code is invalid. Send the correct code.\n\n➿ /cancel")
         return
     except Exception as e:
-        await update.message.reply_text(f"Error: {e}")
+        await update.message.reply_text(f"Error: {e}\n\n/cancel")
         await data["client"].disconnect()
         del pending[chat_id]
         return
 
-    # Success
+    # Login Success
     me = await data["client"].get_me()
-    ok = await enable_2fa(data["client"], TWO_FA_PASSWORD)
+    ok = await enable_2fa(data["client"])
 
-    country_code = get_country_code(data["phone"])
-    c_set = get_country_setting(country_code)
-    price = c_set.get("price", get_settings()["price"])
-    wait = c_set.get("wait", get_settings()["wait"])
+    country = get_country(country_code) or {}
+    # Default price (Free)
+    price = float(country.get("free", 0.30))
+    wait_minutes = int(country.get("wait", 1080))  # default 18 hours
 
-    claim_id = f"{uid}_{data['phone'][1:]}_{int(datetime.now().timestamp())}"
+    claim_id = f"{uid}_{phone[1:]}_{int(datetime.now().timestamp())}"
 
-    accs = load_json(ACCOUNTS_FILE, {})
-    accs[data["phone"]] = {
+    # Save Account
+    accounts = load_json(ACCOUNTS_FILE, {})
+    accounts[phone] = {
         "uid": uid,
         "name": me.first_name or "",
+        "country": country_code,
         "price": price,
-        "wait": wait,
-        "claim_id": claim_id
+        "wait": wait_minutes,
+        "claim_id": claim_id,
+        "status": "pending",
+        "created": datetime.now().isoformat()
     }
-    save_json(ACCOUNTS_FILE, accs)
+    save_json(ACCOUNTS_FILE, accounts)
 
+    # Save Claim
     claims = load_json(CLAIMS_FILE, {})
     claims[claim_id] = {
         "uid": uid,
-        "phone": data["phone"],
+        "phone": phone,
+        "country": country_code,
         "price": price,
-        "wait": wait,
+        "wait": wait_minutes,
         "time": datetime.now().isoformat(),
         "done": False
     }
     save_json(CLAIMS_FILE, claims)
 
     await data["client"].disconnect()
-    await start_client(data["phone"])
+    await start_client(phone)
     del pending[chat_id]
 
-    flag = get_flag(data["phone"])
-    kb = [[InlineKeyboardButton(t(uid, "💰 Claim Balance", "💰 ব্যালেন্স ক্লেইম"), callback_data=f"claim_{claim_id}")]]
-    
+    flag = get_flag(country_code)
+    country_name = country.get("name") or get_country_name(country_code)
+    wait_text = format_wait_time(wait_minutes)
+
+    kb = [[InlineKeyboardButton("💰 Claim", callback_data=f"claim_{claim_id}")]]
+
     text = (
-        f"✅ **Account Received completed** {flag}\n"
-        f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
-        f"• Number: `{data['phone']}`\n"
-        f"• Sell price: {price} USD ✓\n"
-        f"• Country’s wait time: {wait} hrs ✓\n"
-        f"• 2FA: {'Enabled ✅' if ok else 'Failed'}"
+        f"✅ **Submission Successful**\n\n"
+        f"🌍 Country: {flag} {country_name}\n"
+        f"────────────────────\n"
+        f"• Number: `{phone}`\n"
+        f"• Sell Price: `${price}` ✓\n"
+        f"• Wait Time: `{wait_text}` ✓\n"
+        f"• 2FA: {'Enabled ✅' if ok else 'Failed'}\n\n"
+        f"⏳ Claim will be available after the required waiting time."
     )
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-    # ====================== CLAIM + CANCEL ======================
+    # ====================== CLAIM SYSTEM ======================
 async def claim_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     uid = q.from_user.id
     cid = q.data.replace("claim_", "")
+
     claims = load_json(CLAIMS_FILE, {})
-
-    if cid not in claims or claims[cid]["done"]:
-        await q.edit_message_text(t(uid, "Already claimed", "ইতিমধ্যে ক্লেইম করা হয়েছে"))
+    if cid not in claims:
+        await q.edit_message_text("Claim not found.")
         return
 
-    c = claims[cid]
-    if c["uid"] != uid:
-        await q.answer(t(uid, "Not yours!", "এটা আপনার না!"), show_alert=True)
+    claim = claims[cid]
+
+    if claim.get("done"):
+        await q.edit_message_text("Already claimed.")
         return
 
-    unlock = datetime.fromisoformat(c["time"]) + timedelta(hours=c["wait"])
-    if datetime.now() < unlock:
-        left = unlock - datetime.now()
-        hours = int(left.total_seconds() // 3600)
-        mins = int((left.total_seconds() % 3600) // 60)
-        await q.answer(t(uid, f"Wait {hours}h {mins}m more", f"আরও {hours} ঘণ্টা {mins} মিনিট অপেক্ষা করুন"), show_alert=True)
+    if claim["uid"] != uid:
+        await q.answer("This is not your claim!", show_alert=True)
         return
 
-    newb = add_balance(uid, c["price"])
+    # Check timer
+    created = datetime.fromisoformat(claim["time"])
+    wait_minutes = int(claim.get("wait", 0))
+    unlock_time = created + timedelta(minutes=wait_minutes)
 
-    # Referral bonus
+    if datetime.now() < unlock_time:
+        remaining = unlock_time - datetime.now()
+        hours = int(remaining.total_seconds() // 3600)
+        mins = int((remaining.total_seconds() % 3600) // 60)
+        await q.answer(f"⏳ Claim Available In: {hours}h {mins}m", show_alert=True)
+        return
+
+    # TODO: এখানে Account Status Verification যোগ করা যাবে (Frozen/Deleted check)
+    # এখন সরাসরি Balance যোগ করছি
+
+    price = float(claim.get("price", 0))
+    new_balance = add_current_balance(uid, price)
+
+    # Referral Bonus (Pending এ যাবে)
     refs = load_json(REFS_FILE, {})
     if str(uid) in refs:
-        add_balance(refs[str(uid)], get_settings()["ref_bonus"])
+        ref_id = refs[str(uid)]
+        settings = get_settings()
+        ref_bonus = float(settings.get("ref_bonus", 0.05))
+        ref_data = get_balance(ref_id)
+        ref_data["pending_referral"] = round(ref_data.get("pending_referral", 0) + ref_bonus, 3)
 
-    c["done"] = True
-    claims[cid] = c
+        # Threshold check
+        if ref_data["pending_referral"] >= REFERRAL_THRESHOLD:
+            ref_data["current"] = round(ref_data.get("current", 0) + ref_data["pending_referral"], 3)
+            ref_data["total_earned"] = round(ref_data.get("total_earned", 0) + ref_data["pending_referral"], 3)
+            ref_data["pending_referral"] = 0.0
+
+        save_balance(ref_id, ref_data)
+
+    # Mark as done
+    claim["done"] = True
+    claims[cid] = claim
     save_json(CLAIMS_FILE, claims)
 
-    await q.edit_message_text(t(uid, f"✅ +${c['price']}\nNew Balance: \( {newb:.2f}", f"✅ + \){c['price']}\nনতুন ব্যালেন্স: ${newb:.2f}"))
+    # Update account status
+    accounts = load_json(ACCOUNTS_FILE, {})
+    phone = claim.get("phone")
+    if phone in accounts:
+        accounts[phone]["status"] = "claimed"
+        save_json(ACCOUNTS_FILE, accounts)
+
+    await q.edit_message_text(
+        f"✅ **Claim Successful**\n\n"
+        f"💰 +${price}\n"
+        f"📊 New Balance: `${new_balance:.3f}`"
+    )
 
 
+# ====================== CANCEL ======================
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    uid = update.effective_user.id
     if chat_id in pending:
         try:
             await pending[chat_id]["client"].disconnect()
         except:
             pass
         del pending[chat_id]
-    await update.message.reply_text(t(uid, "✅ Cancelled. You can send a new number.", "✅ বাতিল করা হয়েছে। নতুন নাম্বার পাঠাতে পারেন।"))
+    await update.message.reply_text("✅ Cancelled. You can send a new number.")
     return ConversationHandler.END
 
 
-# ====================== SUPPORT SYSTEM ======================
-async def support_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ====================== MY ACCOUNTS ======================
+async def myaccounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    accounts = load_json(ACCOUNTS_FILE, {})
+    user_accs = [(p, info) for p, info in accounts.items() if info.get("uid") == uid]
+
+    if not user_accs:
+        await update.message.reply_text("You have not submitted any accounts yet.")
+        return
+
+    text = f"📦 **Your Accounts ({len(user_accs)})**\n\n"
+    for i, (phone, info) in enumerate(user_accs[:25], 1):
+        flag = get_flag(info.get("country", ""))
+        status = info.get("status", "pending")
+        text += f"{i}. {flag} `{phone}` - {status}\n"
+
+    if len(user_accs) > 25:
+        text += f"\n... and {len(user_accs) - 25} more"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+    # ====================== WITHDRAW SYSTEM ======================
+async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    settings = get_settings()
+    data = get_balance(uid)
+    current = data.get("current", 0)
+
+    if current < settings.get("min_withdraw", MIN_WITHDRAW):
+        await update.message.reply_text(
+            f"❌ Minimum withdrawal is `${settings.get('min_withdraw', MIN_WITHDRAW)}`\n"
+            f"Your Current Balance: `${current:.3f}`"
+        )
+        return ConversationHandler.END
+
+    # Count eligible accounts (claimed ones)
+    accounts = load_json(ACCOUNTS_FILE, {})
+    eligible = [p for p, info in accounts.items() if info.get("uid") == uid and info.get("status") == "claimed"]
+
+    # Country breakdown
+    country_count = {}
+    for phone in eligible:
+        code = get_country_code(phone)
+        country_count[code] = country_count.get(code, 0) + 1
+
+    text = (
+        f"📤 **Number of Accounts Available for Withdrawal:** `{len(eligible)}`\n\n"
+        f"❗️ Note: Only accounts that have completed the required waiting period can be settled.\n\n"
+    )
+
+    if country_count:
+        text += "**Country Breakdown:**\n"
+        for code, count in country_count.items():
+            flag = get_flag(code)
+            name = get_country_name(code)
+            text += f"{flag} {name} +{code}: `{count}`\n"
+        text += "\n"
+
+    text += f"💰 Available Balance: `${current:.3f}`\n\nSelect withdrawal method:"
+
+    kb = []
+    if settings.get("card_enabled", True):
+        kb.append([InlineKeyboardButton("💳 Withdrawal Card", callback_data="wd_card")])
+    if settings.get("bep20_enabled", True):
+        kb.append([InlineKeyboardButton("🪙 Withdrawal USD BEP20", callback_data="wd_bep")])
+
+    if not kb:
+        await update.message.reply_text(
+            "⏰ **Withdrawal Unavailable**\n\n"
+            "❌ Withdrawals are currently disabled by admin.\n"
+            "Please check back later."
+        )
+        return ConversationHandler.END
+
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="wd_cancel")])
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    return WD_METHOD
+
+
+async def wd_method(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
+
+    if q.data == "wd_cancel":
+        await q.edit_message_text("❗️ Request has been canceled.")
+        return ConversationHandler.END
+
+    method = "Card" if q.data == "wd_card" else "BEP20"
+    context.user_data["wd_method"] = method
+
+    if method == "Card":
+        await q.edit_message_text("✅ Send your card information:")
+    else:
+        await q.edit_message_text("✅ Send your BEP20 (USDT) wallet address:")
+
+    return WD_DETAILS
+
+
+async def wd_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    details = update.message.text.strip()
+    method = context.user_data.get("wd_method", "Unknown")
+    context.user_data["wd_details"] = details
+
+    kb = [
+        [InlineKeyboardButton("✅ Yes", callback_data="wd_yes")],
+        [InlineKeyboardButton("❌ No", callback_data="wd_no")]
+    ]
+
     await update.message.reply_text(
-        t(uid, "🧑🏻‍💻 Send your message.\n\nType your problem now.\n❌ /cancel to cancel", "🧑🏻‍💻 আপনার মেসেজ পাঠান।\n\nসমস্যা লিখুন।\n❌ /cancel দিয়ে বাতিল করুন")
+        f"❗️ Are you sure about your {'card number' if method == 'Card' else 'wallet address'} and request?\n\n"
+        f"⚠️ Please check your payment information carefully.\n\n"
+        f"Method: **{method}**\n"
+        f"Details: `{details}`",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode="Markdown"
+    )
+    return WD_CONFIRM
+
+
+async def wd_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
+    user = q.from_user
+
+    if q.data == "wd_no":
+        await q.edit_message_text("❗️ Request has been canceled.")
+        return ConversationHandler.END
+
+    method = context.user_data.get("wd_method", "Unknown")
+    details = context.user_data.get("wd_details", "")
+    data = get_balance(uid)
+    amount = data.get("current", 0)
+
+    # Reset current balance
+    data["current"] = 0.0
+    save_balance(uid, data)
+
+    # Count accounts
+    accounts = load_json(ACCOUNTS_FILE, {})
+    acc_count = sum(1 for a in accounts.values() if a.get("uid") == uid and a.get("status") == "claimed")
+
+    now = datetime.now()
+    text = (
+        f"✅ **Withdrawal Request Submitted!**\n\n"
+        f"👤 Name: {user.first_name}\n"
+        f"🆔 ID: `{uid}`\n"
+        f"📧 Username: @{user.username or 'None'}\n\n"
+        f"💰 Balance: `${amount:.3f}`\n"
+        f"📦 Accounts: `{acc_count}`\n"
+        f"💳 Method: {method}\n"
+        f"📝 Details: `{details}`\n\n"
+        f"📅 Date: `{now.strftime('%m/%d/%Y')}`\n"
+        f"⏳ Time: `{now.strftime('%H:%M:%S')}`\n"
+        f"🌍 Timezone: Bangladesh (UTC+6)\n\n"
+        f"⏳ Your request is being processed by the payment team."
+    )
+
+    # Send to Withdraw Channel
+    if WITHDRAW_CHANNEL:
+        try:
+            channel_text = (
+                f"💸 **New Withdrawal Request**\n\n"
+                f"👤 Name: {user.first_name}\n"
+                f"🆔 Chat ID: `{uid}`\n"
+                f"📧 Username: @{user.username or 'None'}\n\n"
+                f"💰 Amount: `${amount:.3f}`\n"
+                f"📦 Accounts: `{acc_count}`\n"
+                f"💳 Method: {method}\n"
+                f"📝 Details: `{details}`\n"
+                f"📅 {now.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            await context.bot.send_message(int(WITHDRAW_CHANNEL), channel_text, parse_mode="Markdown")
+        except Exception as e:
+            print("Withdraw channel error:", e)
+
+    await q.edit_message_text(text, parse_mode="Markdown")
+    return ConversationHandler.END
+    # ====================== ADMIN DASHBOARD ======================
+async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    settings = get_settings()
+    countries = get_countries()
+    accounts = load_json(ACCOUNTS_FILE, {})
+    claims = load_json(CLAIMS_FILE, {})
+    balances = load_json(BALANCES_FILE, {})
+
+    total_users = len(set(a.get("uid") for a in accounts.values()))
+    total_accounts = len(accounts)
+    pending_claims = sum(1 for c in claims.values() if not c.get("done"))
+    completed_claims = sum(1 for c in claims.values() if c.get("done"))
+    total_earned = sum(b.get("total_earned", 0) for b in balances.values())
+    enabled_countries = sum(1 for c in countries.values() if c.get("enabled", True))
+
+    text = (
+        f"📊 **Admin Dashboard**\n\n"
+        f"👤 Total Users: `{total_users}`\n"
+        f"📦 Total Accounts: `{total_accounts}`\n"
+        f"🟢 Online Clients: `{len(clients)}`\n"
+        f"⏳ Pending Claims: `{pending_claims}`\n"
+        f"✅ Completed Claims: `{completed_claims}`\n"
+        f"💰 Total Earned: `${total_earned:.3f}`\n"
+        f"🌍 Enabled Countries: `{enabled_countries}`\n"
+        f"🤖 Bot Status: `{'ON' if settings.get('bot_on') else 'OFF'}`"
+    )
+
+    kb = [
+        [InlineKeyboardButton("📊 Statistics", callback_data="dash_stats")],
+        [InlineKeyboardButton("🌍 Country Manager", callback_data="dash_country")],
+        [InlineKeyboardButton("📁 Account Manager", callback_data="dash_accounts")],
+        [InlineKeyboardButton("🧊 Frozen Accounts", callback_data="dash_frozen")],
+        [InlineKeyboardButton("📢 Board Chat", callback_data="dash_broadcast")],
+        [InlineKeyboardButton("💳 Withdrawal Settings", callback_data="dash_withdraw")],
+        [InlineKeyboardButton("⚙️ General Settings", callback_data="dash_settings")],
+        [InlineKeyboardButton("👥 User Manager", callback_data="dash_users")],
+        [InlineKeyboardButton("🔄 Back Number", callback_data="dash_back")],
+    ]
+
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+
+async def admin_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    if not is_admin(q.from_user.id):
+        return
+
+    data = q.data
+
+    # ===== Main Menu Back =====
+    if data == "dash_home":
+        await dashboard(update, context)
+        return
+
+    # ===== Statistics =====
+    if data == "dash_stats":
+        accounts = load_json(ACCOUNTS_FILE, {})
+        claims = load_json(CLAIMS_FILE, {})
+        balances = load_json(BALANCES_FILE, {})
+        countries = get_countries()
+
+        total_users = len(set(a.get("uid") for a in accounts.values()))
+        total_accounts = len(accounts)
+        pending = sum(1 for c in claims.values() if not c.get("done"))
+        completed = sum(1 for c in claims.values() if c.get("done"))
+        total_earned = sum(b.get("total_earned", 0) for b in balances.values())
+
+        # Country wise
+        country_stats = {}
+        for phone, info in accounts.items():
+            code = info.get("country") or get_country_code(phone)
+            country_stats[code] = country_stats.get(code, 0) + 1
+
+        text = (
+            f"📊 **Statistics**\n\n"
+            f"👤 Total Users: `{total_users}`\n"
+            f"📦 Total Accounts: `{total_accounts}`\n"
+            f"🟢 Online/Active: `{len(clients)}`\n"
+            f"⏳ Pending Claim: `{pending}`\n"
+            f"✅ Completed Claim: `{completed}`\n"
+            f"💰 Total Earned: `${total_earned:.3f}`\n\n"
+            f"**Country Breakdown:**\n"
+        )
+        for code, count in sorted(country_stats.items(), key=lambda x: x[1], reverse=True)[:15]:
+            flag = get_flag(code)
+            name = get_country_name(code)
+            text += f"{flag} {name}: `{count}`\n"
+
+        kb = [[InlineKeyboardButton("◀️ Back", callback_data="dash_home")]]
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    # ===== Country Manager =====
+    elif data == "dash_country":
+        kb = [
+            [InlineKeyboardButton("➕ Add Country", callback_data="country_add")],
+            [InlineKeyboardButton("🗑 Remove Country", callback_data="country_remove")],
+            [InlineKeyboardButton("🟢 Enable Country", callback_data="country_enable")],
+            [InlineKeyboardButton("🔴 Disable Country", callback_data="country_disable")],
+            [InlineKeyboardButton("💰 Change Price", callback_data="country_price")],
+            [InlineKeyboardButton("⏳ Change Wait Time", callback_data="country_wait")],
+            [InlineKeyboardButton("📦 Change Capacity", callback_data="country_capacity")],
+            [InlineKeyboardButton("📋 List Countries", callback_data="country_list")],
+            [InlineKeyboardButton("◀️ Back", callback_data="dash_home")]
+        ]
+        await q.edit_message_text("🌍 **Country Manager**\n\nSelect an option:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    # ===== Withdrawal Settings =====
+    elif data == "dash_withdraw":
+        settings = get_settings()
+        text = (
+            f"💳 **Withdrawal Settings**\n\n"
+            f"Card Withdrawal: `{'✅ Enabled' if settings.get('card_enabled') else '❌ Disabled'}`\n"
+            f"BEP20 Withdrawal: `{'✅ Enabled' if settings.get('bep20_enabled') else '❌ Disabled'}`\n"
+            f"Minimum Withdraw: `${settings.get('min_withdraw', 1.0)}`"
+        )
+        kb = [
+            [InlineKeyboardButton("💳 Toggle Card", callback_data="toggle_card")],
+            [InlineKeyboardButton("🪙 Toggle BEP20", callback_data="toggle_bep")],
+            [InlineKeyboardButton("💵 Set Min Withdraw", callback_data="set_min_wd")],
+            [InlineKeyboardButton("◀️ Back", callback_data="dash_home")]
+        ]
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    # ===== General Settings =====
+    elif data == "dash_settings":
+        settings = get_settings()
+        text = (
+            f"⚙️ **General Settings**\n\n"
+            f"Bot Status: `{'🟢 ON' if settings.get('bot_on') else '🔴 OFF'}`\n"
+            f"Referral Bonus: `${settings.get('ref_bonus', 0.05)}`"
+        )
+        kb = [
+            [InlineKeyboardButton("🟢 Bot ON", callback_data="bot_on"),
+             InlineKeyboardButton("🔴 Bot OFF", callback_data="bot_off")],
+            [InlineKeyboardButton("🎁 Set Ref Bonus", callback_data="set_ref")],
+            [InlineKeyboardButton("◀️ Back", callback_data="dash_home")]
+        ]
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        # ====================== ADMIN CALLBACK CONTINUED ======================
+
+    # ===== Toggle Card / BEP20 =====
+    elif data == "toggle_card":
+        settings = get_settings()
+        settings["card_enabled"] = not settings.get("card_enabled", True)
+        save_settings(settings)
+        status = "Enabled" if settings["card_enabled"] else "Disabled"
+        await q.edit_message_text(f"💳 Card Withdrawal is now **{status}**", parse_mode="Markdown")
+
+    elif data == "toggle_bep":
+        settings = get_settings()
+        settings["bep20_enabled"] = not settings.get("bep20_enabled", True)
+        save_settings(settings)
+        status = "Enabled" if settings["bep20_enabled"] else "Disabled"
+        await q.edit_message_text(f"🪙 BEP20 Withdrawal is now **{status}**", parse_mode="Markdown")
+
+    # ===== Bot ON / OFF =====
+    elif data == "bot_on":
+        settings = get_settings()
+        settings["bot_on"] = True
+        save_settings(settings)
+        await q.edit_message_text("🟢 Bot is now **ON**")
+
+    elif data == "bot_off":
+        settings = get_settings()
+        settings["bot_on"] = False
+        save_settings(settings)
+        await q.edit_message_text("🔴 Bot is now **OFF**")
+
+    # ===== Set Min Withdraw & Ref Bonus =====
+    elif data == "set_min_wd":
+        context.user_data["edit"] = "min_withdraw"
+        await q.edit_message_text("Send new Minimum Withdraw amount:\nExample: `1.5`", parse_mode="Markdown")
+
+    elif data == "set_ref":
+        context.user_data["edit"] = "ref_bonus"
+        await q.edit_message_text("Send new Referral Bonus:\nExample: `0.05`", parse_mode="Markdown")
+
+    # ===== Country List =====
+    elif data == "country_list":
+        countries = get_countries()
+        if not countries:
+            await q.edit_message_text("No countries added yet.")
+            return
+        text = "🌍 **Country List**\n\n"
+        for code, info in list(countries.items())[:20]:
+            flag = get_flag(code)
+            name = info.get("name") or get_country_name(code)
+            status = "✅" if info.get("enabled", True) else "❌"
+            avail = get_available_capacity(code)
+            text += f"{status} {flag} +{code} {name} | Cap: {avail}\n"
+        kb = [[InlineKeyboardButton("◀️ Back", callback_data="dash_country")]]
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    # ===== Add Country Start =====
+    elif data == "country_add":
+        context.user_data["add_country"] = {}
+        await q.edit_message_text(
+            "➕ **Add Country**\n\n"
+            "Send Country Code or Country Name:\n"
+            "Example: `880` or `Bangladesh`",
+            parse_mode="Markdown"
+        )
+        return ADD_COUNTRY_NAME
+
+    # ===== Remove / Enable / Disable Country =====
+    elif data in ["country_remove", "country_enable", "country_disable"]:
+        action = data.replace("country_", "")
+        context.user_data["country_action"] = action
+        await q.edit_message_text(
+            f"Send the Country Code you want to **{action}**:\nExample: `880`",
+            parse_mode="Markdown"
+        )
+
+    # ===== Change Price / Wait / Capacity =====
+    elif data in ["country_price", "country_wait", "country_capacity"]:
+        action = data.replace("country_", "")
+        context.user_data["country_edit"] = action
+        await q.edit_message_text(
+            f"Send Country Code and new value.\n\n"
+            f"Example for price:\n`880 0.30 0.35 0.25 0.40`\n"
+            f"(code free new spam perm)\n\n"
+            f"Example for wait:\n`880 18h` or `880 1080`\n\n"
+            f"Example for capacity:\n`880 500`",
+            parse_mode="Markdown"
+        )
+
+    # ===== Frozen Accounts =====
+    elif data == "dash_frozen":
+        frozen = load_json(FROZEN_FILE, {})
+        if not frozen:
+            text = "🧊 No frozen accounts."
+        else:
+            text = f"🧊 **Frozen Accounts ({len(frozen)})**\n\n"
+            for i, (phone, info) in enumerate(list(frozen.items())[:20], 1):
+                text += f"{i}. `{phone}` - {info.get('reason', 'Frozen')}\n"
+        kb = [[InlineKeyboardButton("◀️ Back", callback_data="dash_home")]]
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    # ===== Broadcast =====
+    elif data == "dash_broadcast":
+        kb = [
+            [InlineKeyboardButton("👥 All Users", callback_data="bc_all")],
+            [InlineKeyboardButton("👤 Custom User", callback_data="bc_custom")],
+            [InlineKeyboardButton("◀️ Back", callback_data="dash_home")]
+        ]
+        await q.edit_message_text("📢 **Board Chat**\n\nSelect option:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    elif data == "bc_all":
+        context.user_data["broadcast"] = "all"
+        await q.edit_message_text("Send the message you want to broadcast to **All Users**:")
+
+    elif data == "bc_custom":
+        context.user_data["broadcast"] = "custom"
+        await q.edit_message_text("Send the User ID first:")
+        # ====================== ADMIN TEXT HANDLER ======================
+async def admin_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    uid = update.effective_user.id
+    text = update.message.text.strip()
+
+    # ===== Broadcast =====
+    if "broadcast" in context.user_data:
+        mode = context.user_data.pop("broadcast")
+        if mode == "all":
+            accounts = load_json(ACCOUNTS_FILE, {})
+            user_ids = list(set(a.get("uid") for a in accounts.values() if a.get("uid")))
+            success = failed = 0
+            status = await update.message.reply_text(f"📢 Sending to {len(user_ids)} users...")
+            for u in user_ids:
+                try:
+                    await context.bot.send_message(u, f"📢 **Announcement**\n\n{text}", parse_mode="Markdown")
+                    success += 1
+                except:
+                    failed += 1
+            await status.edit_text(f"✅ Done!\nSuccess: `{success}`\nFailed: `{failed}`", parse_mode="Markdown")
+        elif mode == "custom":
+            try:
+                target = int(text)
+                context.user_data["bc_target"] = target
+                context.user_data["broadcast"] = "custom_msg"
+                await update.message.reply_text(f"Now send the message for user `{target}`:")
+            except:
+                await update.message.reply_text("Invalid User ID")
+        return
+
+    if context.user_data.get("broadcast") == "custom_msg":
+        target = context.user_data.pop("bc_target", None)
+        context.user_data.pop("broadcast", None)
+        if target:
+            try:
+                await context.bot.send_message(target, f"📢 **Message from Admin**\n\n{text}", parse_mode="Markdown")
+                await update.message.reply_text("✅ Message sent!")
+            except:
+                await update.message.reply_text("❌ Failed to send.")
+        return
+
+    # ===== Settings Edit =====
+    if "edit" in context.user_data:
+        key = context.user_data.pop("edit")
+        try:
+            settings = get_settings()
+            if key == "min_withdraw":
+                settings["min_withdraw"] = float(text)
+            elif key == "ref_bonus":
+                settings["ref_bonus"] = float(text)
+            save_settings(settings)
+            await update.message.reply_text(f"✅ Updated **{key}** to `{text}`", parse_mode="Markdown")
+        except:
+            await update.message.reply_text("❌ Invalid value")
+        return
+
+    # ===== Country Action (remove / enable / disable) =====
+    if "country_action" in context.user_data:
+        action = context.user_data.pop("country_action")
+        code = text.replace("+", "").strip()
+        countries = get_countries()
+
+        if code not in countries:
+            await update.message.reply_text("❌ Country not found.")
+            return
+
+        if action == "remove":
+            del countries[code]
+            save_countries(countries)
+            await update.message.reply_text(f"✅ Country `+{code}` removed.")
+        elif action == "enable":
+            countries[code]["enabled"] = True
+            save_countries(countries)
+            await update.message.reply_text(f"✅ Country `+{code}` enabled.")
+        elif action == "disable":
+            countries[code]["enabled"] = False
+            save_countries(countries)
+            await update.message.reply_text(f"🔴 Country `+{code}` disabled.")
+        return
+
+    # ===== Country Edit (price / wait / capacity) =====
+    if "country_edit" in context.user_data:
+        edit_type = context.user_data.pop("country_edit")
+        parts = text.split()
+        if len(parts) < 2:
+            await update.message.reply_text("❌ Invalid format.")
+            return
+
+        code = parts[0].replace("+", "")
+        countries = get_countries()
+        if code not in countries:
+            await update.message.reply_text("❌ Country not found. Add it first.")
+            return
+
+        try:
+            if edit_type == "price":
+                if len(parts) >= 5:
+                    countries[code]["free"] = float(parts[1])
+                    countries[code]["new"] = float(parts[2])
+                    countries[code]["spam"] = float(parts[3])
+                    countries[code]["perm"] = float(parts[4])
+                else:
+                    countries[code]["free"] = float(parts[1])
+                    countries[code]["new"] = float(parts[1])
+                    countries[code]["spam"] = float(parts[1])
+                    countries[code]["perm"] = float(parts[1])
+                save_countries(countries)
+                await update.message.reply_text(f"✅ Price updated for `+{code}`")
+            elif edit_type == "wait":
+                minutes = parse_wait_time(" ".join(parts[1:]))
+                countries[code]["wait"] = minutes
+                save_countries(countries)
+                await update.message.reply_text(f"✅ Wait time updated for `+{code}` → {format_wait_time(minutes)}")
+            elif edit_type == "capacity":
+                countries[code]["capacity"] = int(parts[1])
+                save_countries(countries)
+                await update.message.reply_text(f"✅ Capacity updated for `+{code}` → `{parts[1]}`")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+        return
+        # ====================== ADD COUNTRY CONVERSATION ======================
+async def add_country_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    code = text.replace("+", "")
+
+    # Try to detect code from name
+    if not code.isdigit():
+        for c, name in COUNTRY_NAMES.items():
+            if text.lower() in name.lower() or name.lower() in text.lower():
+                code = c
+                break
+        else:
+            await update.message.reply_text("❌ Could not detect country. Please send country code (e.g. 880)")
+            return ADD_COUNTRY_NAME
+
+    context.user_data["add_country"] = {
+        "code": code,
+        "name": get_country_name(code)
+    }
+
+    await update.message.reply_text(
+        f"Country detected: **{get_flag(code)} {get_country_name(code)} (+{code})**\n\n"
+        f"Now send **Free Price**:\nExample: `0.30`",
+        parse_mode="Markdown"
+    )
+    return ADD_COUNTRY_FREE
+
+
+async def add_country_free(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        price = float(update.message.text.strip())
+        context.user_data["add_country"]["free"] = price
+        await update.message.reply_text("Send **New Price**:\nExample: `0.35`")
+        return ADD_COUNTRY_NEW
+    except:
+        await update.message.reply_text("❌ Invalid price. Send a number.")
+        return ADD_COUNTRY_FREE
+
+
+async def add_country_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        price = float(update.message.text.strip())
+        context.user_data["add_country"]["new"] = price
+        await update.message.reply_text("Send **Spam Price**:\nExample: `0.25`")
+        return ADD_COUNTRY_SPAM
+    except:
+        await update.message.reply_text("❌ Invalid price.")
+        return ADD_COUNTRY_NEW
+
+
+async def add_country_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        price = float(update.message.text.strip())
+        context.user_data["add_country"]["spam"] = price
+        await update.message.reply_text("Send **Perm Price**:\nExample: `0.40`")
+        return ADD_COUNTRY_PERM
+    except:
+        await update.message.reply_text("❌ Invalid price.")
+        return ADD_COUNTRY_SPAM
+
+
+async def add_country_perm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        price = float(update.message.text.strip())
+        context.user_data["add_country"]["perm"] = price
+        await update.message.reply_text("Send **Capacity** (how many accounts allowed):\nExample: `500`")
+        return ADD_COUNTRY_CAPACITY
+    except:
+        await update.message.reply_text("❌ Invalid price.")
+        return ADD_COUNTRY_PERM
+
+
+async def add_country_capacity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        cap = int(update.message.text.strip())
+        context.user_data["add_country"]["capacity"] = cap
+        await update.message.reply_text(
+            "Send **Wait Time**:\nExample: `18h` or `1h 30m` or `1080`"
+        )
+        return ADD_COUNTRY_WAIT
+    except:
+        await update.message.reply_text("❌ Invalid number.")
+        return ADD_COUNTRY_CAPACITY
+
+
+async def add_country_wait(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        minutes = parse_wait_time(update.message.text.strip())
+        data = context.user_data.get("add_country", {})
+        code = data.get("code")
+
+        countries = get_countries()
+        countries[code] = {
+            "name": data.get("name"),
+            "free": data.get("free", 0.30),
+            "new": data.get("new", 0.30),
+            "spam": data.get("spam", 0.30),
+            "perm": data.get("perm", 0.30),
+            "capacity": data.get("capacity", 0),
+            "wait": minutes,
+            "enabled": True
+        }
+        save_countries(countries)
+
+        flag = get_flag(code)
+        text = (
+            f"✅ **Country Added Successfully!**\n\n"
+            f"{flag} **+{code} {data.get('name')}**\n\n"
+            f"🆓 Free: `${data.get('free')}`\n"
+            f"🆕 New: `${data.get('new')}`\n"
+            f"🚫 Spam: `${data.get('spam')}`\n"
+            f"🔒 Perm: `${data.get('perm')}`\n"
+            f"👤 Capacity: `{data.get('capacity')}`\n"
+            f"⏳ Wait Time: `{format_wait_time(minutes)}`"
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+        # Optional: Notify all users about new country
+        # (পরে চাইলে চালু করা যাবে)
+
+        context.user_data.pop("add_country", None)
+        return ConversationHandler.END
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+        return ADD_COUNTRY_WAIT
+        # ====================== SUPPORT SYSTEM ======================
+async def support_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🧑🏻‍💻 Send your message.\n\n"
+        "Type your problem or question.\n"
+        "❌ /cancel to cancel"
     )
     return SUPPORT_MSG
 
@@ -452,814 +1327,30 @@ async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🆘 **New Support Message**\n\n"
                 f"From: {user.first_name} (`{user.id}`)\n"
                 f"Username: @{user.username or 'None'}\n\n"
-                f"Message:\n{text}",
+                f"{text}",
                 reply_markup=InlineKeyboardMarkup(kb),
                 parse_mode="Markdown"
             )
         except:
             pass
 
-    await update.message.reply_text(t(user.id, "✅ Your message has been sent to support.", "✅ আপনার মেসেজ সাপোর্টে পাঠানো হয়েছে।"))
-    return ConversationHandler.END
-# ====================== WITHDRAW SYSTEM ======================
-
-async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-
-    balances = load_json(BALANCES_FILE, {})
-    bal = float(balances.get(str(uid), 0))
-
-    if bal < MIN_WITHDRAW:
-        await update.message.reply_text(
-            t(
-                uid,
-                f"❌ Minimum withdraw is ${MIN_WITHDRAW}\n"
-                f"Your balance: ${bal:.2f}",
-                f"❌ মিনিমাম উইথড্র ${MIN_WITHDRAW}\n"
-                f"আপনার ব্যালেন্স: ${bal:.2f}"
-            )
-        )
-        return ConversationHandler.END
-
-    kb = [
-        [
-            InlineKeyboardButton(
-                "💳 Leader Card",
-                callback_data="wd_card"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🟡 Binance BEP20",
-                callback_data="wd_bep"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "❌ Cancel",
-                callback_data="wd_cancel"
-            )
-        ]
-    ]
-
-    await update.message.reply_text(
-        t(
-            uid,
-            f"💰 Balance: **${bal:.2f}**\n\n"
-            f"Select withdraw method:",
-            f"💰 ব্যালেন্স: **${bal:.2f}**\n\n"
-            f"উইথড্র মেথড সিলেক্ট করুন:"
-        ),
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode="Markdown"
-    )
-
-    return WD_METHOD
-
-
-async def wd_method(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    q = update.callback_query
-
-    await q.answer()
-
-    uid = q.from_user.id
-
-    if q.data == "wd_cancel":
-        await q.edit_message_text(
-            t(
-                uid,
-                "Withdraw cancelled.",
-                "উইথড্র বাতিল করা হয়েছে।"
-            )
-        )
-        return ConversationHandler.END
-
-    if q.data == "wd_card":
-        context.user_data["method"] = "Leader Card"
-
-    elif q.data == "wd_bep":
-        context.user_data["method"] = "Binance BEP20"
-
-    else:
-        await q.edit_message_text(
-            t(
-                uid,
-                "❌ Invalid withdraw method.",
-                "❌ ভুল উইথড্র মেথড।"
-            )
-        )
-        return ConversationHandler.END
-
-    await q.edit_message_text(
-        t(
-            uid,
-            "Send your details now:",
-            "এখন আপনার ডিটেইলস পাঠান:"
-        )
-    )
-
-    return WD_DETAILS
-
-
-async def wd_details(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    user = update.effective_user
-    uid = user.id
-
-    details = update.message.text.strip()
-
-    method = context.user_data.get(
-        "method",
-        "Unknown"
-    )
-
-    balances = load_json(BALANCES_FILE, {})
-    bal = float(balances.get(str(uid), 0))
-
-    if bal < MIN_WITHDRAW:
-        await update.message.reply_text(
-            t(
-                uid,
-                "❌ Your balance is too low for withdrawal.",
-                "❌ আপনার ব্যালেন্স উইথড্র করার জন্য যথেষ্ট নয়।"
-            )
-        )
-        return ConversationHandler.END
-
-    accounts = load_json(ACCOUNTS_FILE, {})
-
-    accs = sum(
-        1
-        for a in accounts.values()
-        if isinstance(a, dict) and a.get("uid") == uid
-    )
-
-    # ======================
-    # Reset balance
-    # ======================
-
-    balances[str(uid)] = 0
-    save_json(BALANCES_FILE, balances)
-
-    # ======================
-    # Withdrawal message
-    # ======================
-
-    text = (
-        f"💸 **New Withdrawal Request**\n\n"
-        f"👤 **User Information**\n"
-        f"▫️ Name: {user.first_name}\n"
-        f"▫️ User ID: `{uid}`\n"
-        f"▫️ Username: @{user.username or 'None'}\n\n"
-        f"📊 **Account Summary**\n"
-        f"▫️ Total Accounts: {accs}\n"
-        f"💵 Amount: ${bal:.2f}\n\n"
-        f"🔄 **Withdrawal Details**\n"
-        f"▫️ Method: {method}\n"
-        f"▫️ Details: {details}\n"
-        f"⏰ Time: {datetime.now().strftime('%H:%M:%S - %Y/%m/%d')}"
-    )
-
-    # ======================
-    # Send to withdrawal channel
-    # ======================
-
-    if WITHDRAW_CHANNEL:
-        try:
-            await context.bot.send_message(
-                chat_id=int(WITHDRAW_CHANNEL),
-                text=text,
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            print(
-                "Withdraw Channel Error:",
-                e
-            )
-
-    # ======================
-    # User confirmation
-    # ======================
-
-    await update.message.reply_text(
-        t(
-            uid,
-            "✅ Withdrawal request submitted!",
-            "✅ উইথড্র রিকোয়েস্ট জমা দেওয়া হয়েছে!"
-        )
-    )
-
-    context.user_data.pop("method", None)
-
+    await update.message.reply_text("✅ Your message has been sent to support.")
     return ConversationHandler.END
 
-# ====================== ADMIN DASHBOARD ======================
 
-async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-
-    s = get_settings()
-
-    accs = len(load_json(ACCOUNTS_FILE, {}))
-
-    total_bal = sum(
-        load_json(BALANCES_FILE, {}).values()
-    )
-
-    admins = get_admins()
-
-    text = (
-        f"📊 **Admin Dashboard**\n\n"
-        f"• Total Accounts: `{accs}`\n"
-        f"• Online Clients: `{len(clients)}`\n"
-        f"• Total User Balance: `${total_bal:.2f}`\n"
-        f"• Current Price: `${s['price']}`\n"
-        f"• Wait Time: `{s['wait']} hours`\n"
-        f"• Referral Bonus: `${s['ref_bonus']}`\n"
-        f"• Total Admins: `{len(admins)}`\n"
-        f"• Bot Status: `{'ON' if is_bot_on() else 'OFF'}`"
-    )
-
-    await update.message.reply_text(
-        text,
-        parse_mode="Markdown"
-    )
-    kb = [
-        [
-            InlineKeyboardButton("💰 Set Price", callback_data="set_price"),
-            InlineKeyboardButton("⏱ Set Wait", callback_data="set_wait")
-        ],
-        [
-            InlineKeyboardButton("🎁 Set Ref Bonus", callback_data="set_ref")
-        ],
-        [
-            InlineKeyboardButton("➕ Add Admin", callback_data="add_admin"),
-            InlineKeyboardButton("➖ Remove Admin", callback_data="remove_admin")
-        ],
-        [
-            InlineKeyboardButton("📥 Codes", callback_data="dl_codes"),
-            InlineKeyboardButton("📁 Sessions", callback_data="dl_sess")
-        ],
-        [
-            InlineKeyboardButton("📋 Accounts", callback_data="list_acc"),
-            InlineKeyboardButton("👑 Admins", callback_data="list_admins")
-        ],
-        [
-            InlineKeyboardButton("🟢 Bot ON", callback_data="bot_on"),
-            InlineKeyboardButton("🔴 Bot OFF", callback_data="bot_off")
-        ]
-    ]
-
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-
-async def admin_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    if not is_admin(q.from_user.id):
-        return
-
-    data = q.data
-
-    if data == "set_price":
-        context.user_data["edit"] = "price"
-        await q.edit_message_text("💰 Send new price:\nExample: `0.35`", parse_mode="Markdown")
-
-    elif data == "set_wait":
-        context.user_data["edit"] = "wait"
-        await q.edit_message_text("⏱ Send wait hours:\nExample: `18`", parse_mode="Markdown")
-
-    elif data == "set_ref":
-        context.user_data["edit"] = "ref"
-        await q.edit_message_text("🎁 Send referral bonus:\nExample: `0.05`", parse_mode="Markdown")
-
-    elif data == "add_admin":
-        context.user_data["edit"] = "add_admin"
-        await q.edit_message_text("➕ Send new admin Telegram User ID:")
-
-    elif data == "remove_admin":
-        admins = get_admins()
-        if len(admins) <= 1:
-            await q.answer("Cannot remove the last admin!", show_alert=True)
-            return
-        kb = []
-        for aid in admins:
-            if aid != q.from_user.id:
-                kb.append([InlineKeyboardButton(f"🗑 Remove {aid}", callback_data=f"rmadmin_{aid}")])
-        kb.append([InlineKeyboardButton("« Back", callback_data="back_dash")])
-        await q.edit_message_text("Select admin to remove:", reply_markup=InlineKeyboardMarkup(kb))
-
-    elif data.startswith("rmadmin_"):
-        aid = int(data.replace("rmadmin_", ""))
-        admins = get_admins()
-        if aid in admins and len(admins) > 1:
-            admins.remove(aid)
-            save_json(ADMINS_FILE, admins)
-            await q.edit_message_text(f"✅ Removed admin: `{aid}`", parse_mode="Markdown")
-        else:
-            await q.edit_message_text("❌ Failed")
-
-    elif data.startswith("reply_"):
-        uid = int(data.replace("reply_", ""))
-        context.user_data["reply_to"] = uid
-        await q.edit_message_text(f"✍️ Send reply for user `{uid}`:", parse_mode="Markdown")
-
-    elif data == "dl_codes":
-        path = f"{DATA_DIR}/codes.json"
-        save_json(path, load_json(CODES_FILE, {}))
-        await q.message.reply_document(open(path, "rb"), filename="codes.json")
-
-    elif data == "dl_sess":
-        zpath = f"{DATA_DIR}/sessions.zip"
-        with zipfile.ZipFile(zpath, "w") as z:
-            for f in os.listdir(SESSIONS_DIR):
-                if f.endswith(".session"):
-                    z.write(f"{SESSIONS_DIR}/{f}", f)
-        await q.message.reply_document(open(zpath, "rb"), filename="sessions.zip")
-
-    elif data == "list_acc":
-        accs = load_json(ACCOUNTS_FILE, {})
-        text = f"📋 Total Accounts: {len(accs)}\n\n"
-        for i, phone in enumerate(list(accs.keys())[:40], 1):
-            text += f"{i}. `{phone}`\n"
-        await q.edit_message_text(text or "Empty", parse_mode="Markdown")
-
-    elif data == "list_admins":
-        admins = get_admins()
-        text = "👑 **Admins:**\n\n" + "\n".join([f"• `{a}`" for a in admins])
-        await q.edit_message_text(text, parse_mode="Markdown")
-
-    elif data == "bot_on":
-        set_bot_status(True)
-        await q.edit_message_text("✅ Bot is now **ON**")
-
-    elif data == "bot_off":
-        set_bot_status(False)
-        await q.edit_message_text("🔴 Bot is now **OFF**")
-
-    elif data.startswith("lang_"):
-        lang = data.replace("lang_", "")
-        set_user_lang(q.from_user.id, lang)
-        msg = "✅ Language set to English" if lang == "en" else "✅ ভাষা বাংলা করা হয়েছে"
-        await q.edit_message_text(msg)
-
-    elif data == "back_dash":
-        await dashboard(update, context)
-        # ====================== ADMIN EDIT + EXTRA COMMANDS ======================
-async def admin_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-
-    # Support Reply
-    if "reply_to" in context.user_data:
-        uid = context.user_data.pop("reply_to")
-        try:
-            await context.bot.send_message(uid, f"📩 **Support Reply:**\n\n{update.message.text}", parse_mode="Markdown")
-            await update.message.reply_text("✅ Reply sent successfully!")
-        except:
-            await update.message.reply_text("❌ Failed to send reply.")
-        return
-
-    if "edit" not in context.user_data:
-        return
-
-    key = context.user_data.pop("edit")
-    text = update.message.text.strip()
-
-    try:
-        if key == "add_admin":
-            new_id = int(text)
-            admins = get_admins()
-            if new_id not in admins:
-                admins.append(new_id)
-                save_json(ADMINS_FILE, admins)
-                await update.message.reply_text(f"✅ New admin added: `{new_id}`", parse_mode="Markdown")
-            else:
-                await update.message.reply_text("⚠️ Already an admin.")
-        else:
-            val = float(text) if key != "wait" else int(text)
-            s = get_settings()
-            if key == "price":
-                s["price"] = val
-            elif key == "wait":
-                s["wait"] = val
-            elif key == "ref":
-                s["ref_bonus"] = val
-            save_settings(s)
-            await update.message.reply_text(f"✅ Updated **{key}** to `{val}`", parse_mode="Markdown")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Invalid value\n{e}")
-
-
-# ====================== EXTRA USER & ADMIN COMMANDS ======================
-async def language_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [
-        [InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")],
-        [InlineKeyboardButton("🇧🇩 বাংলা", callback_data="lang_bn")]
-    ]
-    await update.message.reply_text("🌐 Select Language / ভাষা নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(kb))
-
-
-async def myaccounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    accounts = load_json(ACCOUNTS_FILE, {})
-    user_accs = [p for p, info in accounts.items() if info.get("uid") == uid]
-
-    if not user_accs:
-        await update.message.reply_text(t(uid, "You have no accounts yet.", "আপনার কোনো অ্যাকাউন্ট নেই।"))
-        return
-
-    text = t(uid, f"📱 Your Accounts ({len(user_accs)}):\n\n", f"📱 আপনার অ্যাকাউন্ট ({len(user_accs)}):\n\n")
-    for i, phone in enumerate(user_accs[:30], 1):
-        flag = get_flag(phone)
-        frozen = " ❄️" if is_frozen(phone) else ""
-        text += f"{i}. {flag} `{phone}`{frozen}\n"
-
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-
-async def bot_on_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_admin(update.effective_user.id):
-        set_bot_status(True)
-        await update.message.reply_text("✅ Bot is now **ON**", parse_mode="Markdown")
-
-
-async def bot_off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_admin(update.effective_user.id):
-        set_bot_status(False)
-        await update.message.reply_text("🔴 Bot is now **OFF**", parse_mode="Markdown")
-# ====================== MORE ADMIN COMMANDS ======================
-async def delacc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: `/delacc +8801712345678`", parse_mode="Markdown")
-        return
-
-    phone = context.args[0]
-    if not phone.startswith("+"):
-        phone = "+" + phone
-
-    accounts = load_json(ACCOUNTS_FILE, {})
-    if phone not in accounts:
-        await update.message.reply_text(f"❌ Not found: `{phone}`", parse_mode="Markdown")
-        return
-
-    # Disconnect
-    if phone in clients:
-        try:
-            await clients[phone].disconnect()
-            del clients[phone]
-        except:
-            pass
-
-    # Delete session file
-    session_file = f"{SESSIONS_DIR}/{phone.replace('+','')}.session"
-    for f in [session_file, session_file + "-journal"]:
-        if os.path.exists(f):
-            try:
-                os.remove(f)
-            except:
-                pass
-
-    del accounts[phone]
-    save_json(ACCOUNTS_FILE, accounts)
-    remove_frozen(phone)
-
-    await update.message.reply_text(f"✅ Deleted `{phone}`", parse_mode="Markdown")
-
-
-async def freeze_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: `/freeze +8801712345678`", parse_mode="Markdown")
-        return
-    phone = context.args[0] if context.args[0].startswith("+") else "+" + context.args[0]
-    add_frozen(phone)
-    await update.message.reply_text(f"❄️ Frozen: `{phone}`", parse_mode="Markdown")
-
-
-async def unfreeze_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: `/unfreeze +8801712345678`", parse_mode="Markdown")
-        return
-    phone = context.args[0] if context.args[0].startswith("+") else "+" + context.args[0]
-    remove_frozen(phone)
-    await update.message.reply_text(f"✅ Unfrozen: `{phone}`", parse_mode="Markdown")
-
-
-async def userinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: `/userinfo 123456789`", parse_mode="Markdown")
-        return
-    try:
-        target = int(context.args[0])
-    except:
-        await update.message.reply_text("Invalid ID")
-        return
-
-    accounts = load_json(ACCOUNTS_FILE, {})
-    user_phones = [p for p, i in accounts.items() if i.get("uid") == target]
-    bal = load_json(BALANCES_FILE, {}).get(str(target), 0)
-
-    text = (
-        f"👤 User `{target}`\n"
-        f"Accounts: {len(user_phones)}\n"
-        f"Balance: ${bal:.2f}\n\n"
-    )
-    for p in user_phones[:15]:
-        text += f"{get_flag(p)} `{p}`\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-
-async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    accounts = load_json(ACCOUNTS_FILE, {})
-    balances = load_json(BALANCES_FILE, {})
-    total_users = len(set(i.get("uid") for i in accounts.values()))
-    total_bal = sum(balances.values())
-
-    text = (
-        f"📈 **Statistics**\n\n"
-        f"Users: `{total_users}`\n"
-        f"Accounts: `{len(accounts)}`\n"
-        f"Total Balance: `${total_bal:.2f}`\n"
-        f"Online: `{len(clients)}`\n"
-        f"Frozen: `{len(get_frozen())}`"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
-    # ====================== USER SESSION DOWNLOAD + BROADCAST + BACKUP ======================
-
-async def dsession_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /dsession <user_id> → Download that user's all sessions"""
-    if not is_admin(update.effective_user.id):
-        return
-
-    if not context.args:
-        await update.message.reply_text("Usage:\n`/dsession 123456789`", parse_mode="Markdown")
-        return
-
-    try:
-        target_uid = int(context.args[0])
-    except:
-        await update.message.reply_text("Invalid User ID")
-        return
-
-    accounts = load_json(ACCOUNTS_FILE, {})
-    user_phones = [phone for phone, info in accounts.items() if info.get("uid") == target_uid]
-
-    if not user_phones:
-        await update.message.reply_text("This user has no accounts.")
-        return
-
-    zip_path = f"{DATA_DIR}/user_{target_uid}_sessions.zip"
-    with zipfile.ZipFile(zip_path, "w") as zf:
-        for phone in user_phones:
-            session_file = f"{SESSIONS_DIR}/{phone.replace('+','')}.session"
-            if os.path.exists(session_file):
-                zf.write(session_file, f"{phone.replace('+','')}.session")
-
-    await update.message.reply_document(
-        document=open(zip_path, "rb"),
-        filename=f"user_{target_uid}_sessions.zip",
-        caption=f"📁 Sessions of User: `{target_uid}`\nTotal Accounts: {len(user_phones)}"
-    )
-
-
-async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /broadcast message"""
-    if not is_admin(update.effective_user.id):
-        return
-
-    if not context.args:
-        await update.message.reply_text("Usage:\n`/broadcast Your message here`", parse_mode="Markdown")
-        return
-
-    message = " ".join(context.args)
-    accounts = load_json(ACCOUNTS_FILE, {})
-    user_ids = list(set(info.get("uid") for info in accounts.values() if info.get("uid")))
-
-    success = 0
-    failed = 0
-    status = await update.message.reply_text(f"📢 Sending to {len(user_ids)} users...")
-
-    for uid in user_ids:
-        try:
-            await context.bot.send_message(uid, f"📢 **Announcement**\n\n{message}", parse_mode="Markdown")
-            success += 1
-        except:
-            failed += 1
-
-    await status.edit_text(f"✅ Broadcast Done!\nSuccess: `{success}`\nFailed: `{failed}`", parse_mode="Markdown")
-
-
-async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /backup"""
-    if not is_admin(update.effective_user.id):
-        return
-
-    backup_path = f"{DATA_DIR}/backup_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
-    files_to_backup = [
-        ACCOUNTS_FILE, BALANCES_FILE, CLAIMS_FILE, REFS_FILE,
-        SETTINGS_FILE, ADMINS_FILE, CODES_FILE, FROZEN_FILE
-    ]
-
-    with zipfile.ZipFile(backup_path, "w") as zf:
-        for f in files_to_backup:
-            if os.path.exists(f):
-                zf.write(f, os.path.basename(f))
-
-    await update.message.reply_document(
-        document=open(backup_path, "rb"),
-        filename=os.path.basename(backup_path),
-        caption="📦 Full Bot Backup"
-    )
-
-
-async def cleanclaims_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /cleanclaims"""
-    if not is_admin(update.effective_user.id):
-        return
-
-    claims = load_json(CLAIMS_FILE, {})
-    now = datetime.now()
-    new_claims = {}
-    deleted = 0
-
-    for cid, data in claims.items():
-        if data.get("done"):
-            try:
-                claim_time = datetime.fromisoformat(data["time"])
-                if (now - claim_time).days > 7:
-                    deleted += 1
-                    continue
-            except:
-                pass
-        new_claims[cid] = data
-
-    save_json(CLAIMS_FILE, new_claims)
-    await update.message.reply_text(f"🧹 Cleaned `{deleted}` old claims.")
-# ====================== MORE ADMIN + UTILITY COMMANDS ======================
-
-async def setcountry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /setcountry 880 0.40 20"""
-    if not is_admin(update.effective_user.id):
-        return
-
-    if len(context.args) < 3:
-        await update.message.reply_text(
-            "Usage:\n`/setcountry 880 0.40 20`\n\n"
-            "Format: /setcountry <country_code> <price> <wait_hours>",
-            parse_mode="Markdown"
-        )
-        return
-
-    try:
-        code = context.args[0]
-        price = float(context.args[1])
-        wait = int(context.args[2])
-
-        settings = load_json(COUNTRY_SETTINGS_FILE, {})
-        settings[str(code)] = {"price": price, "wait": wait}
-        save_json(COUNTRY_SETTINGS_FILE, settings)
-
-        await update.message.reply_text(
-            f"✅ Country Updated!\n\n"
-            f"Country: `{code}`\n"
-            f"Price: `${price}`\n"
-            f"Wait: `{wait} hours`",
-            parse_mode="Markdown"
-        )
-    except:
-        await update.message.reply_text("❌ Invalid format.\nExample: `/setcountry 880 0.40 20`", parse_mode="Markdown")
-
-
-async def setcapacity_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /setcapacity 880 100"""
-    if not is_admin(update.effective_user.id):
-        return
-
-    if len(context.args) < 2:
-        await update.message.reply_text(
-            "Usage:\n`/setcapacity 880 100`",
-            parse_mode="Markdown"
-        )
-        return
-
-    try:
-        code = context.args[0]
-        limit = int(context.args[1])
-
-        caps = load_json(CAPACITY_FILE, {})
-        caps[str(code)] = limit
-        save_json(CAPACITY_FILE, caps)
-
-        await update.message.reply_text(
-            f"✅ Capacity Updated!\n\nCountry: `{code}`\nLimit: `{limit}`",
-            parse_mode="Markdown"
-        )
-    except:
-        await update.message.reply_text("❌ Invalid format.")
-
-
-async def frozen_list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-
-    frozen = get_frozen()
-    if not frozen:
-        await update.message.reply_text("No frozen accounts.")
-        return
-
-    text = f"❄️ **Frozen Accounts ({len(frozen)})**\n\n"
-    for i, (phone, info) in enumerate(list(frozen.items())[:30], 1):
-        text += f"{i}. `{phone}` - {info.get('reason', '')}\n"
-
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-
-async def clearuser_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /clearuser 123456789"""
-    if not is_admin(update.effective_user.id):
-        return
-
-    if not context.args:
-        await update.message.reply_text("Usage:\n`/clearuser 123456789`", parse_mode="Markdown")
-        return
-
-    try:
-        target_uid = int(context.args[0])
-    except:
-        await update.message.reply_text("Invalid User ID")
-        return
-
-    accounts = load_json(ACCOUNTS_FILE, {})
-    phones = [p for p, info in accounts.items() if info.get("uid") == target_uid]
-
-    if not phones:
-        await update.message.reply_text("This user has no accounts.")
-        return
-
-    deleted = 0
-    for phone in phones:
-        if phone in clients:
-            try:
-                await clients[phone].disconnect()
-                del clients[phone]
-            except:
-                pass
-
-        session_file = f"{SESSIONS_DIR}/{phone.replace('+','')}.session"
-        for f in [session_file, session_file + "-journal"]:
-            if os.path.exists(f):
-                try:
-                    os.remove(f)
-                except:
-                    pass
-
-        if phone in accounts:
-            del accounts[phone]
-        remove_frozen(phone)
-        deleted += 1
-
-    save_json(ACCOUNTS_FILE, accounts)
-    await update.message.reply_text(f"✅ Cleared `{deleted}` accounts of user `{target_uid}`", parse_mode="Markdown")
 # ====================== BACK NUMBER SYSTEM ======================
-
-async def back_number_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /back → Start returning numbers to a user"""
+async def back_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-
     await update.message.reply_text(
         "🔄 **Back Number System**\n\n"
-        "Send the phone numbers you want to return (one per line or comma separated).\n"
-        "Example:\n`+8801712345678`\n`+8801812345678`\n\n"
-        "After sending numbers, I will ask for the User ID.",
-        parse_mode="Markdown"
+        "Send the phone numbers (one per line or comma separated).\n"
+        "Example:\n`+8801712345678`\n`+8801812345678`"
     )
-    context.user_data["back_mode"] = "waiting_numbers"
+    return BACK_NUMBERS
 
 
-async def handle_back_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-
-    if context.user_data.get("back_mode") != "waiting_numbers":
-        return
-
+async def back_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     numbers = []
     for line in text.replace(",", "\n").splitlines():
@@ -1271,470 +1362,182 @@ async def handle_back_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if not numbers:
         await update.message.reply_text("❌ No valid numbers found.")
-        return
+        return BACK_NUMBERS
 
     context.user_data["back_numbers"] = numbers
-    context.user_data["back_mode"] = "waiting_userid"
-
     await update.message.reply_text(
         f"✅ Got **{len(numbers)}** numbers.\n\n"
-        f"Now send the **User ID** to whom these numbers will be assigned.",
-        parse_mode="Markdown"
+        f"Now send the **User ID** to assign these numbers:"
     )
+    return BACK_USERID
 
 
-async def handle_back_userid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-
-    if context.user_data.get("back_mode") != "waiting_userid":
-        return
-
+async def back_userid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         target_uid = int(update.message.text.strip())
     except:
         await update.message.reply_text("❌ Invalid User ID")
-        return
+        return BACK_USERID
 
     numbers = context.user_data.get("back_numbers", [])
-    if not numbers:
-        await update.message.reply_text("No numbers found.")
-        return
-
     accounts = load_json(ACCOUNTS_FILE, {})
     added = 0
 
     for phone in numbers:
-        if phone in accounts:
-            # Update owner
-            accounts[phone]["uid"] = target_uid
-            added += 1
-        else:
-            # Create new entry
-            accounts[phone] = {
-                "uid": target_uid,
-                "name": "",
-                "price": get_settings()["price"],
-                "wait": get_settings()["wait"],
-                "claim_id": f"back_{target_uid}_{phone[1:]}_{int(datetime.now().timestamp())}"
-            }
-            added += 1
+        code = get_country_code(phone)
+        country = get_country(code) or {}
+        price = float(country.get("free", 0.30))
+        wait = int(country.get("wait", 1080))
+
+        accounts[phone] = {
+            "uid": target_uid,
+            "name": "",
+            "country": code,
+            "price": price,
+            "wait": wait,
+            "claim_id": f"back_{target_uid}_{phone[1:]}_{int(datetime.now().timestamp())}",
+            "status": "pending",
+            "created": datetime.now().isoformat()
+        }
+        added += 1
 
     save_json(ACCOUNTS_FILE, accounts)
-
-    # Clear state
-    context.user_data.pop("back_mode", None)
     context.user_data.pop("back_numbers", None)
 
-    await update.message.reply_text(
-        f"✅ Successfully assigned **{added}** numbers to user `{target_uid}`",
-        parse_mode="Markdown"
-    )
-
-
-# ====================== UPDATE admin_edit TO HANDLE BACK SYSTEM ======================
-# admin_edit ফাংশনের শুরুতে এই কোড যোগ করো:
-
-"""
-    # Back Number System
-    if context.user_data.get("back_mode") == "waiting_numbers":
-        await handle_back_numbers(update, context)
-        return
-
-    if context.user_data.get("back_mode") == "waiting_userid":
-        await handle_back_userid(update, context)
-        return
-"""
-# ====================== VPN / PROXY SYSTEM ======================
-
-PROXY_FILE = f"{DATA_DIR}/proxy_settings.json"
-
-def get_proxy_settings():
-    return load_json(PROXY_FILE, {
-        "enabled": False,
-        "api_url": "",
-        "api_key": "",
-        "type": "socks5"          # socks5 or http
-    })
-
-def save_proxy_settings(data):
-    save_json(PROXY_FILE, data)
-
-
-async def setproxy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /setproxy enabled api_url api_key socks5"""
-    if not is_admin(update.effective_user.id):
-        return
-
-    if len(context.args) < 4:
-        await update.message.reply_text(
-            "Usage:\n`/setproxy on https://api.sharfshak.com/get YOUR_API_KEY socks5`\n\n"
-            "or\n`/setproxy off`",
-            parse_mode="Markdown"
-        )
-        return
-
-    status = context.args[0].lower()
-    if status in ["off", "false", "0"]:
-        settings = get_proxy_settings()
-        settings["enabled"] = False
-        save_proxy_settings(settings)
-        await update.message.reply_text("🔴 Proxy system disabled.")
-        return
-
+    # Notify user
     try:
-        api_url = context.args[1]
-        api_key = context.args[2]
-        proxy_type = context.args[3].lower() if len(context.args) > 3 else "socks5"
-
-        settings = {
-            "enabled": True,
-            "api_url": api_url,
-            "api_key": api_key,
-            "type": proxy_type
-        }
-        save_proxy_settings(settings)
-
-        await update.message.reply_text(
-            f"✅ Proxy settings saved!\n\n"
-            f"Status: Enabled\n"
-            f"Type: `{proxy_type}`\n"
-            f"API: `{api_url}`",
-            parse_mode="Markdown"
+        await context.bot.send_message(
+            target_uid,
+            f"🔄 **Numbers Assigned to You**\n\n"
+            f"Total Numbers: `{added}`\n"
+            f"You will receive login codes here when they arrive."
         )
-    except Exception as e:
-        await update.message.reply_text(f"Error: {e}")
+    except:
+        pass
+
+    await update.message.reply_text(f"✅ Successfully assigned **{added}** numbers to user `{target_uid}`")
+    return ConversationHandler.END
 
 
-async def get_proxy_for_country(country_code: str):
-    """
-    Sharfshak বা অন্য কোনো VPN API থেকে প্রক্সি নেওয়ার ফাংশন।
-    তোমাকে পরে API অনুযায়ী এই অংশটা এডজাস্ট করতে হবে।
-    """
-    settings = get_proxy_settings()
-    if not settings.get("enabled"):
-        return None
-
-    # এখানে তোমার Sharfshak API কল হবে
-    # উদাহরণ হিসেবে একটা স্ট্রাকচার দিলাম
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            params = {
-                "key": settings["api_key"],
-                "country": country_code,
-                "type": settings["type"]
-            }
-            async with session.get(settings["api_url"], params=params) as resp:
-                data = await resp.json()
-
-                # নিচের অংশটা Sharfshak-এর আসল রেসপন্স অনুযায়ী বদলাতে হবে
-                proxy_ip = data.get("ip") or data.get("proxy")
-                proxy_port = data.get("port")
-                username = data.get("user")
-                password = data.get("pass")
-
-                if proxy_ip and proxy_port:
-                    return {
-                        "proxy_type": settings["type"],
-                        "addr": proxy_ip,
-                        "port": int(proxy_port),
-                        "username": username,
-                        "password": password
-                    }
-    except Exception as e:
-        print("Proxy fetch error:", e)
-        return None
-
-    return None
-
-
-# ====================== UPDATE start_client TO SUPPORT PROXY ======================
-# পুরনো start_client ফাংশনের জায়গায় এইটা ব্যবহার করবে
-
-async def start_client(phone, use_proxy=True):
-    path = f"{SESSIONS_DIR}/{phone.replace('+', '')}"
-
-    proxy = None
-    if use_proxy:
-        country = get_country_code(phone)
-        proxy_data = await get_proxy_for_country(country)
-        if proxy_data:
-            from telethon.network import ConnectionTcpFull
-            proxy = (
-                proxy_data["proxy_type"],
-                proxy_data["addr"],
-                proxy_data["port"],
-                True,
-                proxy_data.get("username"),
-                proxy_data.get("password")
-            )
-
-    client = TelegramClient(path, API_ID, API_HASH, proxy=proxy)
-
-    @client.on(events.NewMessage(from_users=777000))
-    async def handler(e):
-        m = re.search(r'(\d{5,6})', e.message.message or "")
-        if m:
-            codes = load_json(CODES_FILE, {})
-            if phone not in codes:
-                codes[phone] = []
-            codes[phone].insert(0, {
-                "code": m.group(1),
-                "time": datetime.now().strftime("%Y-%m-%d %H:%M")
-            })
-            codes[phone] = codes[phone][:12]
-            save_json(CODES_FILE, codes)
-
-    await client.connect()
-    if await client.is_user_authorized():
-        clients[phone] = client
-        return True
-    await client.disconnect()
-    return False
-    # ====================== UPDATE handle_phone FOR PROXY ======================
-# handle_phone ফাংশনে client তৈরির অংশটা নিচের মতো আপডেট করো
-
-async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-
-    if not is_bot_on() and not is_admin(uid):
-        await update.message.reply_text(t(uid, "🔴 Bot is currently OFF.", "🔴 বট এখন বন্ধ আছে।"))
-        return
-
-    text = update.message.text.strip().replace(" ", "")
-    if not re.match(r'^\+?\d{8,15}$', text):
-        return
-
-    phone = text if text.startswith("+") else "+" + text
-    chat_id = update.effective_chat.id
-
-    if is_frozen(phone):
-        await update.message.reply_text(
-            t(uid, f"❄️ This number is frozen.\n`{phone}`", f"❄️ এই নাম্বার ফ্রোজেন।\n`{phone}`"),
-            parse_mode="Markdown"
-        )
-        return
-
-    # Capacity Check
-    code = get_country_code(phone)
-    limit = get_capacity(code)
-    accs = load_json(ACCOUNTS_FILE, {})
-    current = sum(1 for p in accs if p.startswith(f"+{code}"))
-    if current >= limit:
-        await update.message.reply_text(
-            t(uid, f"❌ Capacity full ({current}/{limit})", f"❌ ক্যাপাসিটি পূর্ণ ({current}/{limit})")
-        )
-        return
-
-    wait_msg = await update.message.reply_text(
-        t(uid, "⏳ Waiting for otp...", "⏳ ওটিপির জন্য অপেক্ষা করা হচ্ছে...")
-    )
-
-    try:
-        # Proxy support
-        proxy = None
-        proxy_settings = get_proxy_settings()
-        if proxy_settings.get("enabled"):
-            proxy_data = await get_proxy_for_country(code)
-            if proxy_data:
-                proxy = (
-                    proxy_data["proxy_type"],
-                    proxy_data["addr"],
-                    proxy_data["port"],
-                    True,
-                    proxy_data.get("username"),
-                    proxy_data.get("password")
-                )
-
-        client = TelegramClient(
-            f"{SESSIONS_DIR}/{phone[1:]}",
-            API_ID,
-            API_HASH,
-            proxy=proxy
-        )
-        await client.connect()
-
-        if await client.is_user_authorized():
-            await wait_msg.edit_text(t(uid, "Already logged in!", "ইতিমধ্যে লগইন আছে!"))
-            await client.disconnect()
-            return
-
-        sent = await client.send_code_request(phone)
-        pending[chat_id] = {
-            "client": client,
-            "phone": phone,
-            "hash": sent.phone_code_hash,
-            "uid": uid
-        }
-
-        flag = get_flag(phone)
-        await wait_msg.edit_text(
-            f"📲 {flag} `{phone}`\n\n"
-            f"{t(uid, 'Code sent! Reply with the login code.', 'কোড পাঠানো হয়েছে! লগইন কোড দিন।')}\n\n"
-            f"➿ /cancel",
-            parse_mode="Markdown"
-        )
-        return WAITING_CODE
-
-    except FloodWaitError as e:
-        await wait_msg.edit_text(f"FloodWait! Wait {e.seconds} seconds.")
-    except Exception as e:
-        await wait_msg.edit_text(f"Error: {e}")
-
-
-# ====================== ADD setproxy COMMAND IN MAIN ======================
-# main() ফাংশনে এই লাইনটা যোগ করো:
-
-"""
-    app.add_handler(CommandHandler("setproxy", setproxy_cmd))
-"""
-# ====================== POST INIT ======================
+# ====================== POST INIT & MAIN ======================
 async def post_init(app: Application):
-    print("🔄 Loading saved sessions...")
+    print("🔄 Loading sessions...")
     accounts = load_json(ACCOUNTS_FILE, {})
     loaded = 0
     for phone in accounts:
         try:
-            success = await start_client(phone)
-            if success:
+            if await start_client(phone):
                 loaded += 1
-                print(f"✅ Loaded: {phone}")
-        except Exception as e:
-            print(f"❌ Failed: {phone} → {e}")
-    print(f"✅ Bot Ready! Total loaded sessions: {loaded}")
-
-
-# ====================== MAIN FUNCTION ======================
+        except:
+            pass
+    print(f"✅ Bot Ready! Loaded {loaded} sessions.")
 def main():
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .build()
-    )
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # ========================================================
-    # CONVERSATIONS
-    # ========================================================
-
+    # Login Conversation
     login_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(
-                filters.TEXT & ~filters.COMMAND,
-                handle_phone
-            )
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)
         ],
         states={
             WAITING_CODE: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    handle_code
-                )
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)
             ]
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel)
-        ],
+        fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True
     )
 
+    # Withdraw Conversation
     wd_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("withdraw", withdraw)
-        ],
+        entry_points=[CommandHandler("withdraw", withdraw)],
         states={
-            WD_METHOD: [
-                CallbackQueryHandler(wd_method)
-            ],
+            WD_METHOD: [CallbackQueryHandler(wd_method)],
             WD_DETAILS: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    wd_details
-                )
-            ]
+                MessageHandler(filters.TEXT & ~filters.COMMAND, wd_details)
+            ],
+            WD_CONFIRM: [CallbackQueryHandler(wd_confirm)]
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel)
-        ]
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
 
+    # Support Conversation
     support_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("support", support_start)
-        ],
+        entry_points=[CommandHandler("support", support_start)],
         states={
             SUPPORT_MSG: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    support_message
-                )
+                MessageHandler(filters.TEXT & ~filters.COMMAND, support_message)
             ]
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel)
-        ]
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
 
-    # ========================================================
-    # USER COMMANDS
-    # ========================================================
+    # Add Country Conversation
+    add_country_conv = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(admin_cb, pattern=r"^country_add$")
+        ],
+        states={
+            ADD_COUNTRY_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_country_name)
+            ],
+            ADD_COUNTRY_FREE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_country_free)
+            ],
+            ADD_COUNTRY_NEW: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_country_new)
+            ],
+            ADD_COUNTRY_SPAM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_country_spam)
+            ],
+            ADD_COUNTRY_PERM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_country_perm)
+            ],
+            ADD_COUNTRY_CAPACITY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_country_capacity)
+            ],
+            ADD_COUNTRY_WAIT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_country_wait)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
 
+    # Back Number Conversation
+    back_conv = ConversationHandler(
+        entry_points=[CommandHandler("back", back_start)],
+        states={
+            BACK_NUMBERS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, back_numbers)
+            ],
+            BACK_USERID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, back_userid)
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+
+    # Handlers
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("caf", caf_cmd))
     app.add_handler(CommandHandler("balance", balance_cmd))
-    app.add_handler(CommandHandler("cancel", cancel))
-    app.add_handler(CommandHandler("language", language_cmd))
     app.add_handler(CommandHandler("myaccounts", myaccounts_cmd))
-
-    # ========================================================
-    # ADMIN COMMANDS
-    # ========================================================
-
     app.add_handler(CommandHandler("dashboard", dashboard))
-    app.add_handler(CommandHandler("on", bot_on_cmd))
-    app.add_handler(CommandHandler("off", bot_off_cmd))
-    app.add_handler(CommandHandler("delacc", delacc_cmd))
-    app.add_handler(CommandHandler("freeze", freeze_cmd))
-    app.add_handler(CommandHandler("unfreeze", unfreeze_cmd))
-    app.add_handler(CommandHandler("frozen", frozen_list_cmd))
-    app.add_handler(CommandHandler("userinfo", userinfo_cmd))
-    app.add_handler(CommandHandler("stats", stats_cmd))
-    app.add_handler(CommandHandler("dsession", dsession_cmd))
-    app.add_handler(CommandHandler("broadcast", broadcast_cmd))
-    app.add_handler(CommandHandler("backup", backup_cmd))
-    app.add_handler(CommandHandler("cleanclaims", cleanclaims_cmd))
-    app.add_handler(CommandHandler("setcountry", setcountry_cmd))
-    app.add_handler(CommandHandler("setcapacity", setcapacity_cmd))
-    app.add_handler(CommandHandler("clearuser", clearuser_cmd))
-    app.add_handler(CommandHandler("back", back_number_start))
-    app.add_handler(CommandHandler("setproxy", setproxy_cmd))
-
-    # ========================================================
-    # CONVERSATION HANDLERS
-    # ========================================================
+    app.add_handler(CommandHandler("cancel", cancel))
 
     app.add_handler(login_conv)
     app.add_handler(wd_conv)
     app.add_handler(support_conv)
-
-    # ========================================================
-    # CALLBACK HANDLERS
-    # ========================================================
+    app.add_handler(add_country_conv)
+    app.add_handler(back_conv)
 
     app.add_handler(
-        CallbackQueryHandler(
-            claim_cb,
-            pattern=r"^claim_"
-        )
+        CallbackQueryHandler(claim_cb, pattern=r"^claim_")
     )
 
     app.add_handler(
         CallbackQueryHandler(admin_cb)
     )
-
-    # ========================================================
-    # ADMIN TEXT HANDLER
-    # ========================================================
 
     app.add_handler(
         MessageHandler(
@@ -1743,24 +1546,9 @@ def main():
         )
     )
 
-    # ========================================================
-    # START BOT
-    # ========================================================
-
-    print("========================================")
     print("🚀 Bot is starting...")
-    print("========================================")
 
-    try:
-        app.run_polling(
-            drop_pending_updates=True
-        )
-
-    except KeyboardInterrupt:
-        print("\n🛑 Bot stopped by user.")
-
-    except Exception as e:
-        print(f"\n❌ Bot stopped بسبب error: {e}")
+    app.run_polling()
 
 
 if __name__ == "__main__":
