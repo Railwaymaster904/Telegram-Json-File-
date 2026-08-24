@@ -43,7 +43,8 @@ clients = {}
 pending = {}
 
 # ====================== LANGUAGE TEXTS ======================
-"en": {
+TEXTS = {
+    "en": {
     "welcome":
         "👋 Welcome, **{name}**! 🌟\n\n"
         "🌐 Please select your preferred language below:",
