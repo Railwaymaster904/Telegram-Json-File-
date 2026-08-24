@@ -207,7 +207,7 @@ TEXTS = {
     "file_sent":
         "✅ **ফাইল সফলভাবে পাঠানো হয়েছে!** 📁",
 
-    "no_download":
+"no_download":
         "📭 **ডাউনলোড করার মতো কোনো নাম্বার নেই**\n\n"
         "এই মুহূর্তে ডাউনলোড করার জন্য কোনো নাম্বার পাওয়া যায়নি।",
 
@@ -219,7 +219,8 @@ TEXTS = {
         "🔒 টু-ফ্যাক্টর: `{tfa}`\n"
         "📅 {time}\n\n"
         "✅ এই কোডটি ব্যবহার করে লগইন করুন।",
-},
+    }
+}
 
 def t(uid, key, **kwargs):
     langs = load_json(LANG_FILE, {})
@@ -231,7 +232,6 @@ def set_lang(uid, lang):
     langs = load_json(LANG_FILE, {})
     langs[str(uid)] = lang
     save_json(LANG_FILE, langs)
-
 # ====================== HELPERS ======================
 def load_json(path, default=None):
     if default is None:
